@@ -1,50 +1,67 @@
 {
-  "Comment": "State machine to ensure ECS services are not restarted simultaneously",
-  "StartAt": "Describe All Services",
+  "Comment": "State machine to restart a specified ECS service and validate deployment status of an array of services",
+  "StartAt": "Validate Deployment Status",
   "States": {
-    "Describe All Services": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
-      "Parameters": {
-        "Cluster.$": "$.ClusterName",
-        "Services": ["*"]
+    "Validate Deployment Status": {
+      "Type": "Map",
+      "ItemsPath": "$.ValidationServices",
+      "Iterator": {
+        "StartAt": "Check Deployment Status",
+        "States": {
+          "Check Deployment Status": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
+            "Parameters": {
+              "Cluster.$": "$.ClusterName",
+              "Services": [
+                "$$.Map.Item.Value"
+              ]
+            },
+            "ResultPath": "$.ServiceStatus",
+            "Next": "Check If Deployment Is In Progress"
+          },
+          "Check If Deployment Is In Progress": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "Variable": "$.ServiceStatus.services[0].deployments[0].status",
+                "StringEquals": "PRIMARY",
+                "Next": "Deployment In Progress"
+              }
+            ],
+            "Default": "Proceed With Deployment Validation"
+          },
+          "Deployment In Progress": {
+            "Type": "Wait",
+            "Seconds": 60,
+            "Next": "Check Deployment Status"
+          },
+          "Proceed With Deployment Validation": {
+            "Type": "Pass",
+            "ResultPath": "$.DeploymentValidationResult",
+            "Next": "Check All Services Validated"
+          }
+        }
       },
-      "ResultPath": "$.AllServicesStatus",
-      "Next": "Check Deployment Status"
+      "End": true
     },
-    "Check Deployment Status": {
+    "Check All Services Validated": {
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.AllServicesStatus.services",
+          "Variable": "$.DeploymentValidationResult",
           "IsPresent": true,
-          "Next": "Check If Any Service Is In Progress"
+          "Next": "Restart Specified Service"
         }
       ],
-      "Default": "No Services Found"
+      "Default": "No Services To Validate"
     },
-    "Check If Any Service Is In Progress": {
-      "Type": "Choice",
-      "Choices": [
-        {
-          "Variable": "$.AllServicesStatus.services[0].deployments[0].status",
-          "StringEquals": "PRIMARY",
-          "Next": "Deployment In Progress"
-        }
-      ],
-      "Default": "Proceed With Deployment"
-    },
-    "Deployment In Progress": {
-      "Type": "Wait",
-      "Seconds": 60,
-      "Next": "Describe All Services"
-    },
-    "Proceed With Deployment": {
+    "Restart Specified Service": {
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:ecs:updateService",
       "Parameters": {
         "Cluster.$": "$.ClusterName",
-        "Service.$": "$.ServiceName",
+        "Service.$": "$.ServiceToRestart",
         "ForceNewDeployment": true
       },
       "Next": "Wait Before Monitoring"
@@ -60,15 +77,15 @@
       "Parameters": {
         "Cluster.$": "$.ClusterName",
         "Services": [
-          "$.ServiceName"
+          "$.ServiceToRestart"
         ]
       },
       "End": true
     },
-    "No Services Found": {
+    "No Services To Validate": {
       "Type": "Fail",
-      "Error": "NoServicesError",
-      "Cause": "No services found in the cluster."
+      "Error": "NoServicesToValidate",
+      "Cause": "No services found for deployment validation."
     }
   }
 }
