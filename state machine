@@ -36,7 +36,7 @@
                 "Next": "Check Deployment Status"
               }
             ],
-            "Default": "End"
+            "Default": "No Ongoing Deployments"
           },
           "Check Deployment Status": {
             "Type": "Choice",
@@ -44,26 +44,43 @@
               {
                 "Variable": "$.ServiceDetails.services[0].deployments[0].status",
                 "StringEquals": "IN_PROGRESS",
-                "Next": "Wait and Retry"
+                "Next": "Set Deployment In Progress"
               }
             ],
-            "Default": "End"
+            "Default": "No Ongoing Deployments"
           },
-          "End": {
+          "Set Deployment In Progress": {
             "Type": "Pass",
+            "Result": "Deployment In Progress",
             "ResultPath": "$.DeploymentStatus",
-            "Result": "No Deployment",
             "End": true
           },
-          "Wait and Retry": {
-            "Type": "Wait",
-            "Seconds": 30,
-            "Next": "Check Deployments"
+          "No Ongoing Deployments": {
+            "Type": "Pass",
+            "Result": "No Deployment",
+            "ResultPath": "$.DeploymentStatus",
+            "End": true
           }
         }
       },
       "ResultPath": "$.DeploymentCheckResults",
-      "Next": "Process Update"
+      "Next": "Evaluate Deployment Status"
+    },
+    "Evaluate Deployment Status": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.DeploymentCheckResults",
+          "StringEquals": "Deployment In Progress",
+          "Next": "Wait and Retry"
+        }
+      ],
+      "Default": "Process Update"
+    },
+    "Wait and Retry": {
+      "Type": "Wait",
+      "Seconds": 30,
+      "Next": "Check Deployments"
     },
     "Process Update": {
       "Type": "Task",
