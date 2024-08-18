@@ -1,24 +1,28 @@
-# Lambda function for CloudWatch Alarm Trigger
 import json
 import boto3
 
 def lambda_handler(event, context):
-    stepfunctions = boto3.client('stepfunctions')
+    # Extract relevant information from the CloudWatch event
+    cluster_name = event['detail']['clusterName']
+    service_name = event['detail']['serviceName']
     
-    # Example CloudWatch event parsing. Adjust according to your specific event structure
-    alarm_details = event['detail']
-    cluster_name = "your-cluster-name"  # Fixed or derived from another source
-    service_name = alarm_details['Dimensions'][0]['value']  # Assuming the service name is passed here
+    # Initialize Step Functions client
+    client = boto3.client('stepfunctions')
     
-    response = stepfunctions.start_execution(
-        stateMachineArn='arn:aws:states:region:account-id:stateMachine:your-state-machine-name',
-        input=json.dumps({
-            'ClusterName': cluster_name,
-            'ServiceName': service_name
-        })
+    # Define input for Step Function execution
+    input_data = {
+        "ClusterName": cluster_name,
+        "ServiceToRestart": service_name
+    }
+    
+    # Start the Step Function execution
+    response = client.start_execution(
+        stateMachineArn='arn:aws:states:REGION:ACCOUNT_ID:stateMachine:YOUR_STATE_MACHINE_NAME',
+        name='cloudwatch-trigger-' + context.aws_request_id,
+        input=json.dumps(input_data)
     )
     
     return {
         'statusCode': 200,
-        'body': json.dumps('Step Function triggered successfully!')
+        'body': json.dumps('State machine execution started')
     }
