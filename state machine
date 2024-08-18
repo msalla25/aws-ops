@@ -1,17 +1,17 @@
 {
   "Comment": "Express Workflow to manage ECS service restarts ensuring no deployments are in progress",
-  "StartAt": "Check Deployments",
+  "StartAt": "Check Ongoing Deployments",
   "States": {
-    "Check Deployments": {
+    "Check Ongoing Deployments": {
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:ecs:listServices",
       "Parameters": {
         "Cluster.$": "$.ClusterName"
       },
       "ResultPath": "$.ServiceList",
-      "Next": "Check Deployment Status"
+      "Next": "Describe Services"
     },
-    "Check Deployment Status": {
+    "Describe Services": {
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
       "Parameters": {
@@ -35,7 +35,7 @@
     "Wait and Retry": {
       "Type": "Wait",
       "Seconds": 30,
-      "Next": "Check Deployments"
+      "Next": "Check Ongoing Deployments"
     },
     "Process Update": {
       "Type": "Task",
