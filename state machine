@@ -1,8 +1,8 @@
 {
-  "Comment": "State machine to ensure ECS services are stable before initiating a new deployment",
-  "StartAt": "Check Services Status",
+  "Comment": "State machine to ensure ECS services are not restarted simultaneously",
+  "StartAt": "Check Deployment Status",
   "States": {
-    "Check Services Status": {
+    "Check Deployment Status": {
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
       "Parameters": {
@@ -12,25 +12,9 @@
         ]
       },
       "ResultPath": "$.ServiceStatus",
-      "Next": "Check If Services Are Stable"
+      "Next": "Check If Deployment Is In Progress"
     },
-    "Check If Services Are Stable": {
-      "Type": "Choice",
-      "Choices": [
-        {
-          "Variable": "$.ServiceStatus.services[0].deployments[0].status",
-          "StringEquals": "PRIMARY",
-          "Next": "Check If No Deployment In Progress"
-        },
-        {
-          "Variable": "$.ServiceStatus.services[0].deployments[0].status",
-          "IsPresent": true,
-          "Next": "Wait"
-        }
-      ],
-      "Default": "Wait"
-    },
-    "Check If No Deployment In Progress": {
+    "Check If Deployment Is In Progress": {
       "Type": "Choice",
       "Choices": [
         {
@@ -44,7 +28,7 @@
     "Wait": {
       "Type": "Wait",
       "Seconds": 60,
-      "Next": "Check Services Status"
+      "Next": "Check Deployment Status"
     },
     "Proceed With Deployment": {
       "Type": "Task",
