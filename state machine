@@ -1,8 +1,8 @@
 {
   "Comment": "State machine to manage ECS service restarts ensuring only one service is restarted at a time",
-  "StartAt": "Check or Initialize Flag",
+  "StartAt": "Check Flag",
   "States": {
-    "Check or Initialize Flag": {
+    "Check Flag": {
       "Type": "Choice",
       "Choices": [
         {
@@ -11,7 +11,11 @@
           "Next": "Wait and Retry"
         }
       ],
-      "Default": "Set In-Process Flag"
+      "Default": "Proceed Without Flag"
+    },
+    "Proceed Without Flag": {
+      "Type": "Pass",
+      "Next": "Set In-Process Flag"
     },
     "Set In-Process Flag": {
       "Type": "Pass",
@@ -54,7 +58,7 @@
     "Wait and Retry": {
       "Type": "Wait",
       "Seconds": 30,
-      "Next": "Check or Initialize Flag"
+      "Next": "Check Flag"
     }
   }
 }
