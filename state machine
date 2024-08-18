@@ -21,29 +21,30 @@
     },
     "Get Task ID": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::ecs:listTasks",
+      "Resource": "arn:aws:states:::ecs:listTasks.sync",
       "Parameters": {
         "Cluster.$": "$.ClusterName",
         "ServiceName.$": "$.ServiceName"
       },
+      "ResultPath": "$.Tasks",
       "Next": "Restart Service"
     },
     "Restart Service": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::ecs:stopTask",
+      "Resource": "arn:aws:states:::ecs:updateService.sync",
       "Parameters": {
         "Cluster.$": "$.ClusterName",
-        "Task.$": "$.TaskId", 
-        "ServiceName.$": "$.ServiceName"
+        "Service.$": "$.ServiceName",
+        "ForceNewDeployment": true
       },
       "Next": "Monitor Service"
     },
     "Monitor Service": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::ecs:describeTasks",
+      "Resource": "arn:aws:states:::ecs:describeServices.sync",
       "Parameters": {
         "Cluster.$": "$.ClusterName",
-        "Tasks.$": "$.TaskId"
+        "Services.$": "$.ServiceName"
       },
       "Next": "Clear In-Process Flag"
     },
