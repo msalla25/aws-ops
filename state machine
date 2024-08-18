@@ -1,93 +1,32 @@
 {
   "Comment": "Express Workflow to manage ECS service restarts ensuring no deployments are in progress",
-  "StartAt": "Check Deployments",
+  "StartAt": "Check Ongoing Deployments",
   "States": {
-    "Check Deployments": {
+    "Check Ongoing Deployments": {
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:ecs:listServices",
       "Parameters": {
         "Cluster.$": "$.ClusterName"
       },
       "ResultPath": "$.Services",
-      "Next": "Debug Services"
+      "Next": "Describe Services"
     },
-    "Debug Services": {
-      "Type": "Pass",
-      "ResultPath": "$.DebugOutput",
-      "Result": {
-        "Services": "$.Services"
+    "Describe Services": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
+      "Parameters": {
+        "Cluster.$": "$.ClusterName",
+        "Services.$": "$.Services.serviceArns"
       },
-      "Next": "Check Service Deployments"
+      "ResultPath": "$.ServiceDetails",
+      "Next": "Check Deployment Status"
     },
-    "Check Service Deployments": {
-      "Type": "Map",
-      "ItemsPath": "$.Services.serviceArns",  // Ensure this is the correct path
-      "Iterator": {
-        "StartAt": "Describe Service",
-        "States": {
-          "Describe Service": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
-            "Parameters": {
-              "Cluster.$": "$.ClusterName",
-              "Services.$": "$$.Map.Item.Value"
-            },
-            "ResultPath": "$.ServiceDetails",
-            "Next": "Debug Service Details"
-          },
-          "Debug Service Details": {
-            "Type": "Pass",
-            "ResultPath": "$.DebugDetails",
-            "Result": {
-              "ServiceDetails": "$.ServiceDetails"
-            },
-            "Next": "Evaluate Service Deployment"
-          },
-          "Evaluate Service Deployment": {
-            "Type": "Choice",
-            "Choices": [
-              {
-                "Variable": "$.ServiceDetails.services[0].deployments",
-                "IsPresent": true,
-                "Next": "Check Deployment Status"
-              }
-            ],
-            "Default": "No Ongoing Deployments"
-          },
-          "Check Deployment Status": {
-            "Type": "Choice",
-            "Choices": [
-              {
-                "Variable": "$.ServiceDetails.services[0].deployments[0].status",
-                "StringEquals": "IN_PROGRESS",
-                "Next": "Set Deployment In Progress"
-              }
-            ],
-            "Default": "No Ongoing Deployments"
-          },
-          "Set Deployment In Progress": {
-            "Type": "Pass",
-            "Result": "Deployment In Progress",
-            "ResultPath": "$.DeploymentStatus",
-            "End": true
-          },
-          "No Ongoing Deployments": {
-            "Type": "Pass",
-            "Result": "No Deployment",
-            "ResultPath": "$.DeploymentStatus",
-            "End": true
-          }
-        }
-      },
-      "ResultPath": "$.DeploymentCheckResults",
-      "Next": "Evaluate Deployment Status"
-    },
-    "Evaluate Deployment Status": {
+    "Check Deployment Status": {
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.DeploymentCheckResults",
-          "StringEquals": "Deployment In Progress",
+          "Variable": "$.ServiceDetails.services[0].deployments[0].status",
+          "StringEquals": "IN_PROGRESS",
           "Next": "Wait and Retry"
         }
       ],
@@ -96,7 +35,7 @@
     "Wait and Retry": {
       "Type": "Wait",
       "Seconds": 30,
-      "Next": "Check Deployments"
+      "Next": "Check Ongoing Deployments"
     },
     "Process Update": {
       "Type": "Task",
