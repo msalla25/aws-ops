@@ -69,4 +69,12 @@
       "Next": "End State Machine"
     },
     "End State Machine": {
-      "Type": "S
+      "Type": "Succeed"
+    },
+    "Wait and Retry": {
+      "Type": "Wait",
+      "Seconds": 30,
+      "Next": "Check Running Execution"
+    }
+  }
+}
