@@ -1,0 +1,55 @@
+{
+  "Comment": "State machine to manage ECS service restarts ensuring only one service is restarted at a time",
+  "StartAt": "Check Running Execution",
+  "States": {
+    "Check Running Execution": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.ExecutionInProgress",
+          "BooleanEquals": true,
+          "Next": "Wait and Retry"
+        }
+      ],
+      "Default": "Set In-Process Flag"
+    },
+    "Set In-Process Flag": {
+      "Type": "Pass",
+      "ResultPath": "$.ExecutionInProgress",
+      "Result": true,
+      "Next": "Restart Service"
+    },
+    "Restart Service": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::ecs:stopTask",
+      "Parameters": {
+        "Cluster.$": "$.ClusterName",
+        "Task": "<task-id>", 
+        "ServiceName.$": "$.ServiceName"
+      },
+      "Next": "Monitor Service"
+    },
+    "Monitor Service": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::ecs:describeTasks",
+      "Parameters": {
+        "Cluster.$": "$.ClusterName",
+        "Tasks": [
+          "<task-id>"
+        ]
+      },
+      "Next": "Clear In-Process Flag"
+    },
+    "Clear In-Process Flag": {
+      "Type": "Pass",
+      "ResultPath": "$.ExecutionInProgress",
+      "Result": false,
+      "End": true
+    },
+    "Wait and Retry": {
+      "Type": "Wait",
+      "Seconds": 30,
+      "Next": "Check Running Execution"
+    }
+  }
+}
