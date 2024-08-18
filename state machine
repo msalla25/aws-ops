@@ -4,29 +4,66 @@
   "States": {
     "Check Deployments": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::aws-sdk:ecs:listTasks",
+      "Resource": "arn:aws:states:::aws-sdk:ecs:listServices",
       "Parameters": {
-        "Cluster.$": "$.ClusterName",
-        "DesiredStatus": "RUNNING"
+        "Cluster.$": "$.ClusterName"
       },
-      "ResultPath": "$.RunningTasks",
-      "Next": "Evaluate Deployment Status"
+      "ResultPath": "$.Services",
+      "Next": "Check Service Deployments"
     },
-    "Evaluate Deployment Status": {
-      "Type": "Choice",
-      "Choices": [
-        {
-          "Variable": "$.RunningTasks.tasks",
-          "IsPresent": true,
-          "Next": "Wait and Retry"
+    "Check Service Deployments": {
+      "Type": "Map",
+      "ItemsPath": "$.Services.serviceArns",
+      "Iterator": {
+        "StartAt": "Describe Service",
+        "States": {
+          "Describe Service": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
+            "Parameters": {
+              "Cluster.$": "$.ClusterName",
+              "Services.$": "$$.Map.Item.Value"
+            },
+            "ResultPath": "$.ServiceDetails",
+            "Next": "Evaluate Service Deployment"
+          },
+          "Evaluate Service Deployment": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "Variable": "$.ServiceDetails.services[0].deployments",
+                "IsPresent": true,
+                "Next": "Check Deployment Status"
+              }
+            ],
+            "Default": "End"
+          },
+          "Check Deployment Status": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "Variable": "$.ServiceDetails.services[0].deployments[0].status",
+                "StringEquals": "IN_PROGRESS",
+                "Next": "Wait and Retry"
+              }
+            ],
+            "Default": "End"
+          },
+          "End": {
+            "Type": "Pass",
+            "ResultPath": "$.DeploymentStatus",
+            "Result": "No Deployment",
+            "End": true
+          },
+          "Wait and Retry": {
+            "Type": "Wait",
+            "Seconds": 30,
+            "Next": "Check Deployments"
+          }
         }
-      ],
-      "Default": "Process Update"
-    },
-    "Wait and Retry": {
-      "Type": "Wait",
-      "Seconds": 30,
-      "Next": "Check Deployments"
+      },
+      "ResultPath": "$.DeploymentCheckResults",
+      "Next": "Process Update"
     },
     "Process Update": {
       "Type": "Task",
@@ -36,7 +73,7 @@
         "Service.$": "$.ServiceName",
         "ForceNewDeployment": true
       },
-      "HeartbeatSeconds": 300,  // Timeout to help manage parallel executions
+      "HeartbeatSeconds": 300,  // Timeout to help manage long-running tasks
       "Next": "Wait Before Monitoring"
     },
     "Wait Before Monitoring": {
@@ -53,10 +90,6 @@
           "$.ServiceName"
         ]
       },
-      "Next": "Finish"
-    },
-    "Finish": {
-      "Type": "Pass",
       "End": true
     }
   }
