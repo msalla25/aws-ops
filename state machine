@@ -1,8 +1,8 @@
 {
   "Comment": "State machine to manage ECS service restarts ensuring only one service is restarted at a time",
-  "StartAt": "Initialize",
+  "StartAt": "Initialize ExecutionStatus",
   "States": {
-    "Initialize": {
+    "Initialize ExecutionStatus": {
       "Type": "Pass",
       "Result": {
         "ExecutionInProgress": false
