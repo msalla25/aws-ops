@@ -1,12 +1,20 @@
 {
   "Comment": "State machine to manage ECS service restarts ensuring only one service is restarted at a time",
-  "StartAt": "Check Running Execution",
+  "StartAt": "Initialize",
   "States": {
+    "Initialize": {
+      "Type": "Pass",
+      "Result": {
+        "ExecutionInProgress": false
+      },
+      "ResultPath": "$.ExecutionStatus",
+      "Next": "Check Running Execution"
+    },
     "Check Running Execution": {
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.ExecutionInProgress",
+          "Variable": "$.ExecutionStatus.ExecutionInProgress",
           "BooleanEquals": true,
           "Next": "Wait and Retry"
         }
@@ -15,13 +23,15 @@
     },
     "Set In-Process Flag": {
       "Type": "Pass",
-      "ResultPath": "$.ExecutionInProgress",
-      "Result": true,
+      "ResultPath": "$.ExecutionStatus",
+      "Result": {
+        "ExecutionInProgress": true
+      },
       "Next": "Get Task ID"
     },
     "Get Task ID": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::ecs:listTasks.sync",
+      "Resource": "arn:aws:states:::ecs:listTasks",
       "Parameters": {
         "Cluster.$": "$.ClusterName",
         "ServiceName.$": "$.ServiceName"
@@ -31,7 +41,7 @@
     },
     "Restart Service": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::ecs:updateService.sync",
+      "Resource": "arn:aws:states:::ecs:updateService",
       "Parameters": {
         "Cluster.$": "$.ClusterName",
         "Service.$": "$.ServiceName",
@@ -41,7 +51,7 @@
     },
     "Monitor Service": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::ecs:describeServices.sync",
+      "Resource": "arn:aws:states:::ecs:describeServices",
       "Parameters": {
         "Cluster.$": "$.ClusterName",
         "Services.$": "$.ServiceName"
@@ -50,8 +60,10 @@
     },
     "Clear In-Process Flag": {
       "Type": "Pass",
-      "ResultPath": "$.ExecutionInProgress",
-      "Result": false,
+      "ResultPath": "$.ExecutionStatus",
+      "Result": {
+        "ExecutionInProgress": false
+      },
       "End": true
     },
     "Wait and Retry": {
