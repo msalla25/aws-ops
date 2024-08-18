@@ -18,9 +18,9 @@
               ]
             },
             "ResultPath": "$.ServiceStatus",
-            "Next": "Check Deployment Status"
+            "Next": "Evaluate Deployment Status"
           },
-          "Check Deployment Status": {
+          "Evaluate Deployment Status": {
             "Type": "Choice",
             "Choices": [
               {
@@ -44,9 +44,9 @@
         }
       },
       "ResultPath": "$.ValidationResults",
-      "Next": "Check If All Validated"
+      "Next": "Check All Services Validated"
     },
-    "Check If All Validated": {
+    "Check All Services Validated": {
       "Type": "Choice",
       "Choices": [
         {
