@@ -7,9 +7,7 @@
       "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
       "Parameters": {
         "Cluster.$": "$.ClusterName",
-        "Services": [
-          "*"
-        ]
+        "Services": ["*"]
       },
       "ResultPath": "$.AllServicesStatus",
       "Next": "Check Deployment Status"
@@ -18,14 +16,25 @@
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.AllServicesStatus.services[?(@.deployments[0].status == 'PRIMARY')].length",
-          "NumericEquals": 0,
-          "Next": "Proceed With Deployment"
+          "Variable": "$.AllServicesStatus.services",
+          "IsPresent": true,
+          "Next": "Check If Any Service Is In Progress"
         }
       ],
-      "Default": "Wait"
+      "Default": "No Services Found"
     },
-    "Wait": {
+    "Check If Any Service Is In Progress": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.AllServicesStatus.services[0].deployments[0].status",
+          "StringEquals": "PRIMARY",
+          "Next": "Deployment In Progress"
+        }
+      ],
+      "Default": "Proceed With Deployment"
+    },
+    "Deployment In Progress": {
       "Type": "Wait",
       "Seconds": 60,
       "Next": "Describe All Services"
@@ -55,6 +64,11 @@
         ]
       },
       "End": true
+    },
+    "No Services Found": {
+      "Type": "Fail",
+      "Error": "NoServicesError",
+      "Cause": "No services found in the cluster."
     }
   }
 }
