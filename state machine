@@ -6,8 +6,13 @@
       "Type": "Map",
       "ItemsPath": "$.ValidationServices",
       "Iterator": {
-        "StartAt": "Describe Service",
+        "StartAt": "Debug Input",
         "States": {
+          "Debug Input": {
+            "Type": "Pass",
+            "ResultPath": "$.Debug",
+            "Next": "Describe Service"
+          },
           "Describe Service": {
             "Type": "Task",
             "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
