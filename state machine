@@ -1,63 +1,58 @@
 {
-  "Comment": "State machine to manage ECS service restarts with flag logic to prevent concurrent runs",
-  "StartAt": "Check Flag",
+  "Comment": "State machine to handle ECS service deployment, ensuring only one deployment at a time",
+  "StartAt": "Check Deployment Status",
   "States": {
-    "Check Flag": {
+    "Check Deployment Status": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:REGION:ACCOUNT_ID:function:CheckFlagFunction",
-      "ResultPath": "$.FlagCheckResult",
-      "Next": "Evaluate Flag"
+      "Resource": "arn:aws:states:::ecs:describeServices",
+      "Parameters": {
+        "Cluster": "YOUR_CLUSTER_NAME",  // Replace with your ECS cluster name
+        "Services": [
+          "SERVICE_A",  // Replace with actual service names
+          "SERVICE_B"
+        ]
+      },
+      "ResultPath": "$.ServiceStatus",
+      "Next": "Is Deployment In Progress"
     },
-    "Evaluate Flag": {
+    "Is Deployment In Progress": {
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.FlagCheckResult.isLocked",
-          "BooleanEquals": false,
-          "Next": "Set Flag"
+          "Variable": "$.ServiceStatus.services[0].deployments[0].status",
+          "StringEquals": "PRIMARY",
+          "Next": "Wait for Deployment"
         }
       ],
-      "Default": "Fail"
+      "Default": "Start Deployment"
     },
-    "Set Flag": {
-      "Type": "Task",
-      "Resource": "arn:aws:lambda:REGION:ACCOUNT_ID:function:SetFlagFunction",
-      "Parameters": {
-        "FlagName": "ServiceRestartLock",
-        "Status": "locked"
-      },
-      "Next": "Restart Service"
+    "Wait for Deployment": {
+      "Type": "Wait",
+      "Seconds": 30,
+      "Next": "Check Deployment Status"
     },
-    "Restart Service": {
+    "Start Deployment": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::aws-sdk:ecs:updateService",
+      "Resource": "arn:aws:states:::ecs:updateService",
       "Parameters": {
-        "Cluster.$": "$.ClusterName",
-        "Service.$": "$.ServiceToRestart",
+        "Cluster": "YOUR_CLUSTER_NAME",  // Replace with your ECS cluster name
+        "Service": "$.ServiceName",
         "ForceNewDeployment": true
       },
-      "Next": "Wait Before Monitoring"
+      "Next": "Wait for Completion"
     },
-    "Wait Before Monitoring": {
-      "Type": "Wait",
-      "Seconds": 300,
-      "Next": "Monitor Service"
-    },
-    "Monitor Service": {
+    "Wait for Completion": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
+      "Resource": "arn:aws:states:::ecs:describeServices",
       "Parameters": {
-        "Cluster.$": "$.ClusterName",
-        "Services": [
-          "$.ServiceToRestart"
-        ]
+        "Cluster": "YOUR_CLUSTER_NAME",  // Replace with your ECS cluster name
+        "Services": ["$.ServiceName"]
       },
-      "End": true
+      "ResultPath": "$.DeploymentStatus",
+      "Next": "Deployment Complete"
     },
-    "Fail": {
-      "Type": "Fail",
-      "Error": "ConcurrentExecutionError",
-      "Cause": "Another execution is currently in progress."
+    "Deployment Complete": {
+      "Type": "Succeed"
     }
   }
 }
