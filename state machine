@@ -17,6 +17,15 @@
       "Type": "Pass",
       "ResultPath": "$.ExecutionInProgress",
       "Result": true,
+      "Next": "Get Task ID"
+    },
+    "Get Task ID": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::ecs:listTasks",
+      "Parameters": {
+        "Cluster.$": "$.ClusterName",
+        "ServiceName.$": "$.ServiceName"
+      },
       "Next": "Restart Service"
     },
     "Restart Service": {
@@ -24,7 +33,7 @@
       "Resource": "arn:aws:states:::ecs:stopTask",
       "Parameters": {
         "Cluster.$": "$.ClusterName",
-        "Task": "<task-id>", 
+        "Task.$": "$.TaskId", 
         "ServiceName.$": "$.ServiceName"
       },
       "Next": "Monitor Service"
@@ -34,9 +43,7 @@
       "Resource": "arn:aws:states:::ecs:describeTasks",
       "Parameters": {
         "Cluster.$": "$.ClusterName",
-        "Tasks": [
-          "<task-id>"
-        ]
+        "Tasks.$": "$.TaskId"
       },
       "Next": "Clear In-Process Flag"
     },
