@@ -7,23 +7,6 @@
       "Choices": [
         {
           "Variable": "$.ExecutionInProgress",
-          "IsPresent": true,
-          "Next": "Check Running Execution"
-        }
-      ],
-      "Default": "Initialize Flag"
-    },
-    "Initialize Flag": {
-      "Type": "Pass",
-      "Result": false,
-      "ResultPath": "$.ExecutionInProgress",
-      "Next": "Check Running Execution"
-    },
-    "Check Running Execution": {
-      "Type": "Choice",
-      "Choices": [
-        {
-          "Variable": "$.ExecutionInProgress",
           "BooleanEquals": true,
           "Next": "Wait and Retry"
         }
@@ -40,8 +23,8 @@
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:ecs:updateService",
       "Parameters": {
-        "Cluster": "$.ClusterName",
-        "Service": "$.ServiceName",
+        "Cluster.$": "$.ClusterName",
+        "Service.$": "$.ServiceName",
         "ForceNewDeployment": true
       },
       "Next": "Wait Before Monitoring"
@@ -55,7 +38,7 @@
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
       "Parameters": {
-        "Cluster": "$.ClusterName",
+        "Cluster.$": "$.ClusterName",
         "Services": [
           "$.ServiceName"
         ]
@@ -66,15 +49,12 @@
       "Type": "Pass",
       "Result": false,
       "ResultPath": "$.ExecutionInProgress",
-      "Next": "End State Machine"
-    },
-    "End State Machine": {
-      "Type": "Succeed"
+      "End": true
     },
     "Wait and Retry": {
       "Type": "Wait",
       "Seconds": 30,
-      "Next": "Check Running Execution"
+      "Next": "Check or Initialize Flag"
     }
   }
 }
