@@ -1,14 +1,14 @@
 {
-  "Comment": "State machine to restart a specified ECS service and validate deployment status of an array of services",
-  "StartAt": "Check Deployment Status",
+  "Comment": "State machine to restart a specified ECS service after validating deployment status of services",
+  "StartAt": "Describe Validation Services",
   "States": {
-    "Check Deployment Status": {
+    "Describe Validation Services": {
       "Type": "Map",
       "ItemsPath": "$.ValidationServices",
       "Iterator": {
-        "StartAt": "Describe Service",
+        "StartAt": "Check Service Deployment",
         "States": {
-          "Describe Service": {
+          "Check Service Deployment": {
             "Type": "Task",
             "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
             "Parameters": {
@@ -18,9 +18,9 @@
               ]
             },
             "ResultPath": "$.ServiceStatus",
-            "Next": "Check If Deployment Is In Progress"
+            "Next": "Check Deployment Status"
           },
-          "Check If Deployment Is In Progress": {
+          "Check Deployment Status": {
             "Type": "Choice",
             "Choices": [
               {
@@ -29,24 +29,24 @@
                 "Next": "Deployment In Progress"
               }
             ],
-            "Default": "Proceed With Validation"
+            "Default": "Service Stable"
           },
           "Deployment In Progress": {
             "Type": "Wait",
             "Seconds": 60,
-            "Next": "Describe Service"
+            "Next": "Check Service Deployment"
           },
-          "Proceed With Validation": {
+          "Service Stable": {
             "Type": "Pass",
             "Result": "Service is stable",
-            "Next": "Check If All Services Are Validated"
+            "End": true
           }
         }
       },
       "ResultPath": "$.ValidationResults",
-      "Next": "Check If All Services Are Validated"
+      "Next": "Check All Services Validated"
     },
-    "Check If All Services Are Validated": {
+    "Check All Services Validated": {
       "Type": "Choice",
       "Choices": [
         {
@@ -55,7 +55,7 @@
           "Next": "Restart Specified Service"
         }
       ],
-      "Default": "No Services To Validate"
+      "Default": "Fail"
     },
     "Restart Specified Service": {
       "Type": "Task",
@@ -83,10 +83,10 @@
       },
       "End": true
     },
-    "No Services To Validate": {
+    "Fail": {
       "Type": "Fail",
-      "Error": "NoServicesToValidate",
-      "Cause": "No services found for validation."
+      "Error": "DeploymentInProgress",
+      "Cause": "One or more services have an ongoing deployment."
     }
   }
 }
