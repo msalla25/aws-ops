@@ -1,14 +1,14 @@
 {
   "Comment": "State machine to restart a specified ECS service and validate deployment status of an array of services",
-  "StartAt": "Validate Deployment Status",
+  "StartAt": "Check Deployment Status",
   "States": {
-    "Validate Deployment Status": {
+    "Check Deployment Status": {
       "Type": "Map",
       "ItemsPath": "$.ValidationServices",
       "Iterator": {
-        "StartAt": "Check Deployment Status",
+        "StartAt": "Describe Service",
         "States": {
-          "Check Deployment Status": {
+          "Describe Service": {
             "Type": "Task",
             "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
             "Parameters": {
@@ -29,27 +29,28 @@
                 "Next": "Deployment In Progress"
               }
             ],
-            "Default": "Proceed With Deployment Validation"
+            "Default": "Proceed With Validation"
           },
           "Deployment In Progress": {
             "Type": "Wait",
             "Seconds": 60,
-            "Next": "Check Deployment Status"
+            "Next": "Describe Service"
           },
-          "Proceed With Deployment Validation": {
+          "Proceed With Validation": {
             "Type": "Pass",
-            "ResultPath": "$.DeploymentValidationResult",
-            "Next": "Check All Services Validated"
+            "Result": "Service is stable",
+            "Next": "Check If All Services Are Validated"
           }
         }
       },
-      "End": true
+      "ResultPath": "$.ValidationResults",
+      "Next": "Check If All Services Are Validated"
     },
-    "Check All Services Validated": {
+    "Check If All Services Are Validated": {
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.DeploymentValidationResult",
+          "Variable": "$.ValidationResults",
           "IsPresent": true,
           "Next": "Restart Specified Service"
         }
@@ -85,7 +86,7 @@
     "No Services To Validate": {
       "Type": "Fail",
       "Error": "NoServicesToValidate",
-      "Cause": "No services found for deployment validation."
+      "Cause": "No services found for validation."
     }
   }
 }
