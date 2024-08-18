@@ -1,14 +1,14 @@
 {
   "Comment": "State machine to restart a specified ECS service after validating deployment status of services",
-  "StartAt": "Describe Validation Services",
+  "StartAt": "Check Deployment Status",
   "States": {
-    "Describe Validation Services": {
+    "Check Deployment Status": {
       "Type": "Map",
       "ItemsPath": "$.ValidationServices",
       "Iterator": {
-        "StartAt": "Check Service Deployment",
+        "StartAt": "Describe Service",
         "States": {
-          "Check Service Deployment": {
+          "Describe Service": {
             "Type": "Task",
             "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
             "Parameters": {
@@ -34,7 +34,7 @@
           "Deployment In Progress": {
             "Type": "Wait",
             "Seconds": 60,
-            "Next": "Check Service Deployment"
+            "Next": "Describe Service"
           },
           "Service Stable": {
             "Type": "Pass",
@@ -44,9 +44,9 @@
         }
       },
       "ResultPath": "$.ValidationResults",
-      "Next": "Check All Services Validated"
+      "Next": "Check If All Validated"
     },
-    "Check All Services Validated": {
+    "Check If All Validated": {
       "Type": "Choice",
       "Choices": [
         {
