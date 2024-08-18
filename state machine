@@ -1,43 +1,52 @@
 {
-  "Comment": "Express Workflow to manage ECS service restarts ensuring no deployments are in progress",
-  "StartAt": "Check for Ongoing Deployments",
+  "Comment": "State machine to ensure ECS services are stable before initiating a new deployment",
+  "StartAt": "Check Services Status",
   "States": {
-    "Check for Ongoing Deployments": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::aws-sdk:ecs:listServices",
-      "Parameters": {
-        "Cluster.$": "$.ClusterName"
-      },
-      "ResultPath": "$.ServiceList",
-      "Next": "Describe Services"
-    },
-    "Describe Services": {
+    "Check Services Status": {
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
       "Parameters": {
         "Cluster.$": "$.ClusterName",
-        "Services.$": "$.ServiceList.serviceArns"
+        "Services": [
+          "$.ServiceName"
+        ]
       },
-      "ResultPath": "$.ServiceDetails",
-      "Next": "Check Deployment Status"
+      "ResultPath": "$.ServiceStatus",
+      "Next": "Check If Services Are Stable"
     },
-    "Check Deployment Status": {
+    "Check If Services Are Stable": {
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.ServiceDetails.services[0].deployments[0].status",
-          "StringEquals": "IN_PROGRESS",
-          "Next": "Wait and Retry"
+          "Variable": "$.ServiceStatus.services[0].deployments[0].status",
+          "StringEquals": "PRIMARY",
+          "Next": "Check If No Deployment In Progress"
+        },
+        {
+          "Variable": "$.ServiceStatus.services[0].deployments[0].status",
+          "StringNotEquals": "PRIMARY",
+          "Next": "Wait"
         }
       ],
-      "Default": "Process Update"
+      "Default": "Wait"
     },
-    "Wait and Retry": {
+    "Check If No Deployment In Progress": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.ServiceStatus.services[0].deployments[0].rolloutState",
+          "StringEquals": "COMPLETED",
+          "Next": "Proceed With Deployment"
+        }
+      ],
+      "Default": "Wait"
+    },
+    "Wait": {
       "Type": "Wait",
-      "Seconds": 30,
-      "Next": "Check for Ongoing Deployments"
+      "Seconds": 60,
+      "Next": "Check Services Status"
     },
-    "Process Update": {
+    "Proceed With Deployment": {
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:ecs:updateService",
       "Parameters": {
@@ -45,12 +54,11 @@
         "Service.$": "$.ServiceName",
         "ForceNewDeployment": true
       },
-      "HeartbeatSeconds": 300,  // Timeout to help manage long-running tasks
       "Next": "Wait Before Monitoring"
     },
     "Wait Before Monitoring": {
       "Type": "Wait",
-      "Seconds": 300,  // 5 minutes wait
+      "Seconds": 300,
       "Next": "Monitor Service"
     },
     "Monitor Service": {
