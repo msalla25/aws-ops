@@ -9,34 +9,23 @@
         "Cluster.$": "$.ClusterName"
       },
       "ResultPath": "$.ServiceList",
-      "Next": "Describe All Services"
+      "Next": "Describe Services"
     },
-    "Describe All Services": {
+    "Describe Services": {
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
       "Parameters": {
         "Cluster.$": "$.ClusterName",
-        "Services.$": "$.ServiceList.serviceArns"  // This may still be needed to describe services, but we avoid using it directly in evaluations.
+        "Services.$": "$.ServiceList.serviceArns"
       },
       "ResultPath": "$.ServiceDetails",
-      "Next": "Evaluate Deployment Status"
+      "Next": "Check Deployment Status"
     },
-    "Evaluate Deployment Status": {
+    "Check Deployment Status": {
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.ServiceDetails.services",
-          "IsPresent": true,
-          "Next": "Check Deployments Status"
-        }
-      ],
-      "Default": "Process Update"
-    },
-    "Check Deployments Status": {
-      "Type": "Choice",
-      "Choices": [
-        {
-          "Variable": "$.ServiceDetails.services[*].deployments[*].status",
+          "Variable": "$.ServiceDetails.services[0].deployments[0].status",
           "StringEquals": "IN_PROGRESS",
           "Next": "Wait and Retry"
         }
