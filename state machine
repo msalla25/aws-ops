@@ -1,29 +1,34 @@
 {
-  "Comment": "State machine to manage ECS service restarts ensuring only one service is restarted at a time",
-  "StartAt": "Check Flag",
+  "Comment": "Express Workflow to manage ECS service restarts ensuring no deployments are in progress",
+  "StartAt": "Check Deployments",
   "States": {
-    "Check Flag": {
+    "Check Deployments": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:ecs:listTasks",
+      "Parameters": {
+        "Cluster.$": "$.ClusterName",
+        "DesiredStatus": "RUNNING"
+      },
+      "ResultPath": "$.RunningTasks",
+      "Next": "Evaluate Deployment Status"
+    },
+    "Evaluate Deployment Status": {
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.ExecutionInProgress",
-          "BooleanEquals": true,
+          "Variable": "$.RunningTasks.tasks",
+          "IsPresent": true,
           "Next": "Wait and Retry"
         }
       ],
-      "Default": "Proceed Without Flag"
+      "Default": "Process Update"
     },
-    "Proceed Without Flag": {
-      "Type": "Pass",
-      "Next": "Set In-Process Flag"
+    "Wait and Retry": {
+      "Type": "Wait",
+      "Seconds": 30,
+      "Next": "Check Deployments"
     },
-    "Set In-Process Flag": {
-      "Type": "Pass",
-      "Result": true,
-      "ResultPath": "$.ExecutionInProgress",
-      "Next": "Update Service"
-    },
-    "Update Service": {
+    "Process Update": {
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:ecs:updateService",
       "Parameters": {
@@ -31,6 +36,7 @@
         "Service.$": "$.ServiceName",
         "ForceNewDeployment": true
       },
+      "HeartbeatSeconds": 300,  // Timeout to help manage parallel executions
       "Next": "Wait Before Monitoring"
     },
     "Wait Before Monitoring": {
@@ -47,18 +53,11 @@
           "$.ServiceName"
         ]
       },
-      "Next": "Clear In-Process Flag"
+      "Next": "Finish"
     },
-    "Clear In-Process Flag": {
+    "Finish": {
       "Type": "Pass",
-      "Result": false,
-      "ResultPath": "$.ExecutionInProgress",
       "End": true
-    },
-    "Wait and Retry": {
-      "Type": "Wait",
-      "Seconds": 30,
-      "Next": "Check Flag"
     }
   }
 }
