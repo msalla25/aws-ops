@@ -1,20 +1,12 @@
 {
   "Comment": "State machine to manage ECS service restarts ensuring only one service is restarted at a time",
-  "StartAt": "Initialize ExecutionStatus",
+  "StartAt": "Check Running Execution",
   "States": {
-    "Initialize ExecutionStatus": {
-      "Type": "Pass",
-      "Result": {
-        "ExecutionInProgress": false
-      },
-      "ResultPath": "$.ExecutionStatus",
-      "Next": "Check Running Execution"
-    },
     "Check Running Execution": {
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.ExecutionStatus.ExecutionInProgress",
+          "Variable": "$.ExecutionInProgress",
           "BooleanEquals": true,
           "Next": "Wait and Retry"
         }
@@ -23,10 +15,8 @@
     },
     "Set In-Process Flag": {
       "Type": "Pass",
-      "Result": {
-        "ExecutionInProgress": true
-      },
-      "ResultPath": "$.ExecutionStatus",
+      "Result": true,
+      "ResultPath": "$.ExecutionInProgress",
       "Next": "Update Service"
     },
     "Update Service": {
@@ -41,7 +31,7 @@
     },
     "Wait Before Monitoring": {
       "Type": "Wait",
-      "Seconds": 300,  // 5 minutes wait
+      "Seconds": 300,
       "Next": "Monitor Service"
     },
     "Monitor Service": {
@@ -57,10 +47,8 @@
     },
     "Clear In-Process Flag": {
       "Type": "Pass",
-      "Result": {
-        "ExecutionInProgress": false
-      },
-      "ResultPath": "$.ExecutionStatus",
+      "Result": false,
+      "ResultPath": "$.ExecutionInProgress",
       "End": true
     },
     "Wait and Retry": {
