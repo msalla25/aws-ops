@@ -24,7 +24,7 @@
         },
         {
           "Variable": "$.ServiceStatus.services[0].deployments[0].status",
-          "StringNotEquals": "PRIMARY",
+          "IsPresent": true,
           "Next": "Wait"
         }
       ],
