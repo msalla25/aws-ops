@@ -1,68 +1,34 @@
 {
-  "Comment": "State machine to restart a specified ECS service after validating deployment status of services",
-  "StartAt": "Check Deployment Status",
+  "Comment": "State machine to manage ECS service restarts with flag logic to prevent concurrent runs",
+  "StartAt": "Check Flag",
   "States": {
-    "Check Deployment Status": {
-      "Type": "Map",
-      "ItemsPath": "$.ValidationServices",
-      "Iterator": {
-        "StartAt": "Debug Input",
-        "States": {
-          "Debug Input": {
-            "Type": "Pass",
-            "ResultPath": "$.Debug",
-            "Next": "Describe Service"
-          },
-          "Describe Service": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
-            "Parameters": {
-              "Cluster.$": "$.ClusterName",
-              "Services": [
-                "$$.Map.Item.Value"
-              ]
-            },
-            "ResultPath": "$.ServiceStatus",
-            "Next": "Evaluate Deployment Status"
-          },
-          "Evaluate Deployment Status": {
-            "Type": "Choice",
-            "Choices": [
-              {
-                "Variable": "$.ServiceStatus.services[0].deployments[0].status",
-                "StringEquals": "PRIMARY",
-                "Next": "Deployment In Progress"
-              }
-            ],
-            "Default": "Service Stable"
-          },
-          "Deployment In Progress": {
-            "Type": "Wait",
-            "Seconds": 60,
-            "Next": "Describe Service"
-          },
-          "Service Stable": {
-            "Type": "Pass",
-            "Result": "Service is stable",
-            "End": true
-          }
-        }
-      },
-      "ResultPath": "$.ValidationResults",
-      "Next": "Check All Services Validated"
+    "Check Flag": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:REGION:ACCOUNT_ID:function:CheckFlagFunction",
+      "ResultPath": "$.FlagCheckResult",
+      "Next": "Evaluate Flag"
     },
-    "Check All Services Validated": {
+    "Evaluate Flag": {
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.ValidationResults",
-          "IsPresent": true,
-          "Next": "Restart Specified Service"
+          "Variable": "$.FlagCheckResult.isLocked",
+          "BooleanEquals": false,
+          "Next": "Set Flag"
         }
       ],
       "Default": "Fail"
     },
-    "Restart Specified Service": {
+    "Set Flag": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:REGION:ACCOUNT_ID:function:SetFlagFunction",
+      "Parameters": {
+        "FlagName": "ServiceRestartLock",
+        "Status": "locked"
+      },
+      "Next": "Restart Service"
+    },
+    "Restart Service": {
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:ecs:updateService",
       "Parameters": {
@@ -90,8 +56,8 @@
     },
     "Fail": {
       "Type": "Fail",
-      "Error": "DeploymentInProgress",
-      "Cause": "One or more services have an ongoing deployment."
+      "Error": "ConcurrentExecutionError",
+      "Cause": "Another execution is currently in progress."
     }
   }
 }
