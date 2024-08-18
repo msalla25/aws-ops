@@ -27,34 +27,26 @@
       "Result": {
         "ExecutionInProgress": true
       },
-      "Next": "Get Task ID"
+      "Next": "Update Service"
     },
-    "Get Task ID": {
+    "Update Service": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::ecs:listTasks",
+      "Resource": "arn:aws:states:::aws-sdk:ecs:updateService",
       "Parameters": {
-        "Cluster.$": "$.ClusterName",
-        "ServiceName.$": "$.ServiceName"
-      },
-      "ResultPath": "$.Tasks",
-      "Next": "Restart Service"
-    },
-    "Restart Service": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::ecs:updateService",
-      "Parameters": {
-        "Cluster.$": "$.ClusterName",
-        "Service.$": "$.ServiceName",
+        "Cluster": "$.ClusterName",
+        "Service": "$.ServiceName",
         "ForceNewDeployment": true
       },
       "Next": "Monitor Service"
     },
     "Monitor Service": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::ecs:describeServices",
+      "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
       "Parameters": {
-        "Cluster.$": "$.ClusterName",
-        "Services.$": "$.ServiceName"
+        "Cluster": "$.ClusterName",
+        "Services": [
+          "$.ServiceName"
+        ]
       },
       "Next": "Clear In-Process Flag"
     },
