@@ -1,7 +1,24 @@
 {
   "Comment": "State machine to manage ECS service restarts ensuring only one service is restarted at a time",
-  "StartAt": "Check Running Execution",
+  "StartAt": "Check or Initialize Flag",
   "States": {
+    "Check or Initialize Flag": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.ExecutionInProgress",
+          "IsPresent": true,
+          "Next": "Check Running Execution"
+        }
+      ],
+      "Default": "Initialize Flag"
+    },
+    "Initialize Flag": {
+      "Type": "Pass",
+      "Result": false,
+      "ResultPath": "$.ExecutionInProgress",
+      "Next": "Check Running Execution"
+    },
     "Check Running Execution": {
       "Type": "Choice",
       "Choices": [
@@ -31,7 +48,7 @@
     },
     "Wait Before Monitoring": {
       "Type": "Wait",
-      "Seconds": 300,
+      "Seconds": 300,  // 5 minutes wait
       "Next": "Monitor Service"
     },
     "Monitor Service": {
@@ -49,12 +66,7 @@
       "Type": "Pass",
       "Result": false,
       "ResultPath": "$.ExecutionInProgress",
-      "End": true
+      "Next": "End State Machine"
     },
-    "Wait and Retry": {
-      "Type": "Wait",
-      "Seconds": 30,
-      "Next": "Check Running Execution"
-    }
-  }
-}
+    "End State Machine": {
+      "Type": "S
