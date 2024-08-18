@@ -79,35 +79,4 @@
     },
     "Wait and Retry": {
       "Type": "Wait",
-      "Seconds": 30,
-      "Next": "Check Deployments"
-    },
-    "Process Update": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::aws-sdk:ecs:updateService",
-      "Parameters": {
-        "Cluster.$": "$.ClusterName",
-        "Service.$": "$.ServiceName",
-        "ForceNewDeployment": true
-      },
-      "HeartbeatSeconds": 300,  // Timeout to help manage long-running tasks
-      "Next": "Wait Before Monitoring"
-    },
-    "Wait Before Monitoring": {
-      "Type": "Wait",
-      "Seconds": 300,  // 5 minutes wait
-      "Next": "Monitor Service"
-    },
-    "Monitor Service": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
-      "Parameters": {
-        "Cluster.$": "$.ClusterName",
-        "Services": [
-          "$.ServiceName"
-        ]
-      },
-      "End": true
-    }
-  }
-}
+      "Se
