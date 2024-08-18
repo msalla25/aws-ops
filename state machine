@@ -9,11 +9,19 @@
         "Cluster.$": "$.ClusterName"
       },
       "ResultPath": "$.Services",
+      "Next": "Debug Services"
+    },
+    "Debug Services": {
+      "Type": "Pass",
+      "ResultPath": "$.DebugOutput",
+      "Result": {
+        "Services": "$.Services"
+      },
       "Next": "Check Service Deployments"
     },
     "Check Service Deployments": {
       "Type": "Map",
-      "ItemsPath": "$.Services.serviceArns",
+      "ItemsPath": "$.Services.serviceArns",  // Ensure this is the correct path
       "Iterator": {
         "StartAt": "Describe Service",
         "States": {
@@ -25,6 +33,14 @@
               "Services.$": "$$.Map.Item.Value"
             },
             "ResultPath": "$.ServiceDetails",
+            "Next": "Debug Service Details"
+          },
+          "Debug Service Details": {
+            "Type": "Pass",
+            "ResultPath": "$.DebugDetails",
+            "Result": {
+              "ServiceDetails": "$.ServiceDetails"
+            },
             "Next": "Evaluate Service Deployment"
           },
           "Evaluate Service Deployment": {
