@@ -5,10 +5,18 @@ import time
 ecs_client = boto3.client('ecs')
 
 def lambda_handler(event, context):
-    # Extract cluster name and service name from the input event
-    cluster_name = event['ClusterName']
-    target_service_name = event['ServiceName']
-    
+    # Determine if the request is coming from API Gateway or CloudWatch
+    if 'body' in event:
+        # This is an API Gateway request
+        body = json.loads(event['body'])
+        cluster_name = body['ClusterName']
+        target_service_name = body['ServiceName']
+    else:
+        # This is a CloudWatch request
+        # Assuming CloudWatch event structure
+        cluster_name = "your-cluster-name"  # Replace with actual cluster name or derive from event
+        target_service_name = event['detail']['Dimensions'][0]['value']  # Replace with correct path to service name
+
     # Step 1: Check if any service in the cluster is undergoing a deployment
     if not check_cluster_stability(cluster_name):
         print("Cluster is stable. Proceeding with the service restart.")
