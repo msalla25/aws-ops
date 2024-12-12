@@ -1,26 +1,15 @@
 import boto3
 
 def lambda_handler(event, context):
-    client = boto3.client('events')
+    step_function_arn = event['stepFunctionArn']
 
-    response = client.put_rule_state(
-        RuleName='your_rule_name',
-        State='ENABLED'
-    )
+    client = boto3.client('stepfunctions')
 
-    # Optionally, trigger the rule immediately with an event
-    response = client.put_targets(
-        Rule='your_rule_name',
-        Entries=[
-            {
-                'Id': '1',
-                'Arn': 'arn:aws:lambda:us-east-1:123456789012:function:your_target_lambda'
-            }
-        ]
+    response = client.start_execution(
+        stateMachineArn=step_function_arn
     )
 
     return {
         'statusCode': 200,
-        'body': 'EventBridge rule triggered successfully'
+        'body': f"Step Function execution started: {response['executionArn']}"
     }
-
