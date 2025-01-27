@@ -1,0 +1,25 @@
+---
+- name: Process Postman Collection
+  hosts: localhost
+  vars:
+    postman_file: "{{ lookup('file', 'uploaded_postman_collection.json') }}"
+  tasks:
+    - name: Parse Postman collection JSON
+      set_fact:
+        postman_requests: "{{ postman_file | from_json }}"
+
+    - name: Iterate over requests and call APIs
+      uri:
+        url: "{{ item.request.url }}"
+        method: "{{ item.request.method }}"
+        headers: "{{ item.request.header | json_query('[].{name: key, value: value}') | items2dict }}"
+        body: "{{ item.request.body.raw if item.request.body.raw is defined else '' }}"
+        status_code: 200
+      loop: "{{ postman_requests.item | json_query('item') }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: api_responses
+
+    - name: Display API responses
+      debug:
+        var: api_responses
