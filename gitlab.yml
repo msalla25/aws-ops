@@ -1,62 +1,42 @@
 stages:
   - test
 
-test-api:
+variables:
+  ANSIBLE_CONTROLLER_URL: "https://ansible-controller.example.com/api/v2/job_templates/"  # Replace with your Ansible controller URL
+  ANSIBLE_JOB_TEMPLATE_ID: "123"  # Replace with your Ansible job template ID
+  POSTMAN_COLLECTION_DIR: "src/test"
+
+run_api_tests:
   stage: test
   script:
-    - echo "Looking for Postman collections in the src/test folder..."
     - |
-      if [ -d "src/test" ]; then
-        files=$(find src/test -name "*.json")
-        if [ -z "$files" ]; then
-          echo "No Postman collections found. Skipping tests."
-          exit 0
-        fi
-        for file in $files; do
-          echo "Processing $file..."
-          # Make an API call to Ansible controller to upload the Postman file and launch the job
-          curl -X POST "$ANSIBLE_API_URL/api/v2/job_templates/<template_id>/launch/" \
-            -H "Authorization: Bearer $ANSIBLE_API_TOKEN" \
-            -H "Content-Type: application/json" \
-            -F "file=@$file" \
-            --silent --output response.json
-          
-          # Parse the response to get the job ID
-          job_id=$(jq -r '.id' response.json)
-          if [ "$job_id" = "null" ]; then
-            echo "Failed to trigger Ansible job."
-            cat response.json
-            exit 1
-          fi
-          echo "Triggered Ansible job: $job_id. Fetching results..."
+      # Install dependencies (if needed)
+      apt-get update && apt-get install -y curl jq
 
-          # Poll the job status
-          while true; do
-            sleep 5
-            status=$(curl -X GET "$ANSIBLE_API_URL/api/v2/jobs/$job_id/" \
-              -H "Authorization: Bearer $ANSIBLE_API_TOKEN" \
-              --silent | jq -r '.status')
-            if [ "$status" = "successful" ]; then
-              echo "Job $job_id completed successfully!"
-              # Fetch the stdout of the job
-              curl -X GET "$ANSIBLE_API_URL/api/v2/jobs/$job_id/stdout/" \
-                -H "Authorization: Bearer $ANSIBLE_API_TOKEN" \
-                --silent
-              break
-            elif [ "$status" = "failed" ]; then
-              echo "Job $job_id failed."
-              exit 1
-            else
-              echo "Job $job_id is $status..."
-            fi
-          done
-        done
-      else
-        echo "Test folder not found. Skipping tests."
-        exit 0
-      fi
-  only:
-    - main
-  variables:
-    ANSIBLE_API_URL: $ANSIBLE_API_URL
-    ANSIBLE_API_TOKEN: $ANSIBLE_API_TOKEN
+      # Loop through Postman collection files in /src/test
+      for file in $(find $POSTMAN_COLLECTION_DIR -name "*.json"); do
+        echo "Processing file: $file"
+
+        # Read file content and encode it for API request
+        FILE_CONTENT=$(cat $file | jq -c | base64 -w 0)
+
+        # Call Ansible controller API to trigger job
+        RESPONSE=$(curl -s -X POST \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer $ANSIBLE_API_TOKEN" \
+          -d '{
+            "extra_vars": {
+              "postman_collection": "'$FILE_CONTENT'"
+            }
+          }' \
+          "$ANSIBLE_CONTROLLER_URL$ANSIBLE_JOB_TEMPLATE_ID/launch/")
+
+        # Check if job was triggered successfully
+        JOB_ID=$(echo $RESPONSE | jq -r '.job')
+        if [ "$JOB_ID" != "null" ]; then
+          echo "Ansible job triggered successfully. Job ID: $JOB_ID"
+        else
+          echo "Failed to trigger Ansible job. Response: $RESPONSE"
+          exit 1
+        fi
+      done
