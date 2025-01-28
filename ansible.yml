@@ -1,25 +1,28 @@
 ---
-- name: Process Postman Collection
+- name: Run API tests using Postman collection
   hosts: localhost
+  gather_facts: no
   vars:
-    postman_file: "{{ lookup('file', 'uploaded_postman_collection.json') }}"
+    postman_collection: "{{ postman_collection | b64decode }}"
   tasks:
-    - name: Parse Postman collection JSON
+    - name: Parse Postman collection
       set_fact:
-        postman_requests: "{{ postman_file | from_json }}"
+        api_requests: "{{ postman_collection | from_json | json_query('item[*]') }}"
 
-    - name: Iterate over requests and call APIs
+    - name: Run API requests
       uri:
-        url: "{{ item.request.url }}"
+        url: "{{ item.request.url.raw }}"
         method: "{{ item.request.method }}"
-        headers: "{{ item.request.header | json_query('[].{name: key, value: value}') | items2dict }}"
-        body: "{{ item.request.body.raw if item.request.body.raw is defined else '' }}"
-        status_code: 200
-      loop: "{{ postman_requests.item | json_query('item') }}"
+        headers: "{{ item.request.header | items2dict(key_name='key', value_name='value') }}"
+        body: "{{ item.request.body.raw | default(omit) }}"
+        body_format: "{{ 'json' if item.request.body.mode == 'raw' else omit }}"
+        status_code: "{{ item.response | json_query('[].code') | default([200]) }}"
+        validate_certs: no
+      loop: "{{ api_requests }}"
       loop_control:
         label: "{{ item.name }}"
-      register: api_responses
+      register: api_results
 
-    - name: Display API responses
+    - name: Display API results
       debug:
-        var: api_responses
+        var: api_results
