@@ -12,7 +12,7 @@ run_api_tests:
   script:
     - |
       # Install dependencies (if needed)
-      apt-get update && apt-get install -y curl python3 ansible
+      apt-get update && apt-get install -y curl python3
 
       # Loop through Postman collection files in /src/test
       for file in $(find $POSTMAN_COLLECTION_DIR -name "*.json"); do
@@ -52,11 +52,8 @@ run_api_tests:
       EOF
       )
 
-        # Encode the processed content for API request using Python
-        FILE_CONTENT=$(echo "$PROCESSED_CONTENT" | python3 -c "import base64, sys; print(base64.b64encode(sys.stdin.read().encode('utf-8')).decode('utf-8'))")
-
-        # Prepare JSON payload with properly escaped content
-        JSON_PAYLOAD=$(python3 -c "import json; print(json.dumps({'extra_vars': {'postman_collection': '$FILE_CONTENT'}}))")
+        # Prepare JSON payload with the processed content
+        JSON_PAYLOAD=$(python3 -c "import json; print(json.dumps({'extra_vars': {'postman_collection': $PROCESSED_CONTENT}}))")
 
         # Call Ansible controller API to trigger job
         RESPONSE=$(curl -s -X POST \
