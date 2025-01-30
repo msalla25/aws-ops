@@ -12,48 +12,22 @@ run_api_tests:
   script:
     - |
       # Install dependencies (if needed)
-      apt-get update && apt-get install -y curl python3
+      apt-get update && apt-get install -y curl jq python3
 
       # Loop through Postman collection files in /src/test
       for file in $(find $POSTMAN_COLLECTION_DIR -name "*.json"); do
         echo "Processing file: $file"
 
-        # Preprocess the file to extract relevant information
-        PROCESSED_CONTENT=$(python3 <<EOF
-      import re
+        # Read file content and validate JSON using jq
+        if ! FILE_CONTENT=$(jq '.' "$file"); then
+          echo "Error: Invalid JSON in file $file"
+          exit 1
+        fi
 
-      with open("$file", "r") as f:
-          content = f.read()
-
-      # Extract URLs, methods, headers, and bodies using regex (customize as needed)
-      urls = re.findall(r'"url"\s*:\s*"([^"]+)"', content)
-      methods = re.findall(r'"method"\s*:\s*"([^"]+)"', content)
-      headers = re.findall(r'"header"\s*:\s*\[([^\]]+)\]', content)
-      bodies = re.findall(r'"body"\s*:\s*\{([^}]+)\}', content)
-
-      # Format the extracted data into a structured JSON-like format
-      structured_data = {
-          "item": [
-              {
-                  "request": {
-                      "url": urls[i],
-                      "method": methods[i],
-                      "header": headers[i] if i < len(headers) else [],
-                      "body": bodies[i] if i < len(bodies) else {}
-                  }
-              }
-              for i in range(len(urls))
-          ]
-      }
-
-      # Print the structured data as a JSON string
-      import json
-      print(json.dumps(structured_data))
-      EOF
-      )
-
-        # Prepare JSON payload with the processed content
-        JSON_PAYLOAD=$(python3 -c "import json; print(json.dumps({'extra_vars': {'postman_collection': $PROCESSED_CONTENT}}))")
+        # Prepare JSON payload with properly escaped content using jq
+        JSON_PAYLOAD=$(jq -n \
+          --argjson postman_collection "$FILE_CONTENT" \
+          '{extra_vars: {postman_collection: $postman_collection}}')
 
         # Call Ansible controller API to trigger job
         RESPONSE=$(curl -s -X POST \
@@ -62,12 +36,11 @@ run_api_tests:
           -d "$JSON_PAYLOAD" \
           "$ANSIBLE_CONTROLLER_URL$ANSIBLE_JOB_TEMPLATE_ID/launch/")
 
-        # Check if job was triggered successfully using Python
-        JOB_ID=$(python3 -c "import json, sys; print(json.loads('''$RESPONSE''').get('job', 'null'))")
-        if [ "$JOB_ID" != "null" ]; then
-          echo "Ansible job triggered successfully. Job ID: $JOB_ID"
-        else
+        # Check if job was triggered successfully using jq
+        if ! JOB_ID=$(echo "$RESPONSE" | jq -r '.job'); then
           echo "Failed to trigger Ansible job. Response: $RESPONSE"
           exit 1
+        else
+          echo "Ansible job triggered successfully. Job ID: $JOB_ID"
         fi
       done
