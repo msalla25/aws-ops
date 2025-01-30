@@ -24,16 +24,13 @@ run_api_tests:
           exit 1
         fi
 
-        # Prepare JSON payload with properly escaped content using jq
-        JSON_PAYLOAD=$(jq -n \
-          --argjson postman_collection "$FILE_CONTENT" \
-          '{extra_vars: {postman_collection: $postman_collection}}')
-
-        # Call Ansible controller API to trigger job
+        # Call Ansible controller API to trigger job with extra_vars
         RESPONSE=$(curl -s -X POST \
           -H "Content-Type: application/json" \
           -H "Authorization: Bearer $ANSIBLE_API_TOKEN" \
-          -d "$JSON_PAYLOAD" \
+          -d "$(jq -n \
+            --argjson postman_collection "$FILE_CONTENT" \
+            '{extra_vars: {postman_collection: $postman_collection}}')" \
           "$ANSIBLE_CONTROLLER_URL$ANSIBLE_JOB_TEMPLATE_ID/launch/")
 
         # Check if job was triggered successfully using jq
