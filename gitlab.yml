@@ -12,7 +12,7 @@ run_api_tests:
   script:
     - |
       # Install dependencies (if needed)
-      apt-get update && apt-get install -y curl python3
+      apt-get update && apt-get install -y curl python3 ansible
 
       # Loop through Postman collection files in /src/test
       for file in $(find $POSTMAN_COLLECTION_DIR -name "*.json"); do
