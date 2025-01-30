@@ -17,7 +17,7 @@
 
     - name: Run API requests
       uri:
-        url: "{{ item.request.url.raw }}"
+        url: "{{ item.request.url }}"
         method: "{{ item.request.method }}"
         headers: >-
           {{
@@ -25,7 +25,7 @@
               'Authorization': 'Bearer ' + bearer_token
             })
           }}
-        body: "{{ item.request.body.raw | default(omit) }}"
+        body: "{{ item.request.body | default(omit) }}"
         body_format: "{{ 'json' if item.request.body.mode == 'raw' else omit }}"
         status_code: "{{ item.response | json_query('[].code') | default([200]) }}"
         validate_certs: no
