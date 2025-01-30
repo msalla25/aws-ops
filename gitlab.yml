@@ -4,7 +4,8 @@ stages:
 variables:
   ANSIBLE_CONTROLLER_URL: "https://ansible-controller.example.com/api/v2/job_templates/"  # Replace with your Ansible controller URL
   ANSIBLE_JOB_TEMPLATE_ID: "123"  # Replace with your Ansible job template ID
-  POSTMAN_COLLECTION_DIR: "src/test"
+  POSTMAN_COLLECTION_DIR: "src/test"  # Directory containing Postman collection files
+  ANSIBLE_API_TOKEN: "your_ansible_api_token_here"  # Replace with your Ansible API token
 
 run_api_tests:
   stage: test
@@ -13,33 +14,25 @@ run_api_tests:
       # Install dependencies (if needed)
       apt-get update && apt-get install -y curl python3
 
-      # Loop through Postman collection files in src/test
+      # Loop through Postman collection files in /src/test
       for file in $(find $POSTMAN_COLLECTION_DIR -name "*.json"); do
         echo "Processing file: $file"
 
-        # Read file content and ensure it's valid JSON for API request using Python
-        FILE_CONTENT=$(python3 -c "import json, sys; print(json.dumps(json.load(open(sys.argv[1])), ensure_ascii=False))" "$file")
+        # Read file content and encode it for API request using Python
+        FILE_CONTENT=$(python3 -c "import json, base64; print(base64.b64encode(open('$file', 'rb').read()).decode('utf-8'))")
 
-        # Escape JSON properly for API request
-        FILE_CONTENT_ESCAPED=$(echo "$FILE_CONTENT" | sed 's/"/\\"/g')
+        # Prepare JSON payload with properly escaped content
+        JSON_PAYLOAD=$(python3 -c "import json; print(json.dumps({'extra_vars': {'postman_collection': '$FILE_CONTENT'}}))")
 
         # Call Ansible controller API to trigger job
         RESPONSE=$(curl -s -X POST \
           -H "Content-Type: application/json" \
           -H "Authorization: Bearer $ANSIBLE_API_TOKEN" \
-          -d '{
-            "extra_vars": {
-              "postman_collection": "'"$FILE_CONTENT_ESCAPED"'"
-            }
-          }' \
+          -d "$JSON_PAYLOAD" \
           "$ANSIBLE_CONTROLLER_URL$ANSIBLE_JOB_TEMPLATE_ID/launch/")
 
-        # Debug response
-        echo "Response: $RESPONSE"
-
         # Check if job was triggered successfully using Python
-        JOB_ID=$(python3 -c "import json, sys; response=json.loads(sys.argv[1]); print(response.get('job', 'null'))" "$RESPONSE")
-
+        JOB_ID=$(python3 -c "import json, sys; print(json.loads('''$RESPONSE''').get('job', 'null'))")
         if [ "$JOB_ID" != "null" ]; then
           echo "Ansible job triggered successfully. Job ID: $JOB_ID"
         else
