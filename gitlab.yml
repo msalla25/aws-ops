@@ -13,13 +13,12 @@ run_api_tests:
       # Install dependencies (if needed)
       apt-get update && apt-get install -y curl python3
 
-      # Loop through Postman collection files in /src/test
+      # Loop through Postman collection files in src/test
       for file in $(find $POSTMAN_COLLECTION_DIR -name "*.json"); do
         echo "Processing file: $file"
 
-        # Read file content and encode it for API request using Python
-        FILE_CONTENT=$(python3 -c "import json; print(json.dumps(json.load(open('$file'))))")
-
+        # Read file content and ensure it's valid JSON for API request using Python
+        FILE_CONTENT=$(python3 -c "import json; print(json.dumps(json.load(open('$file')), separators=(',', ':')))")
 
         # Call Ansible controller API to trigger job
         RESPONSE=$(curl -s -X POST \
@@ -27,13 +26,14 @@ run_api_tests:
           -H "Authorization: Bearer $ANSIBLE_API_TOKEN" \
           -d '{
             "extra_vars": {
-              "postman_collection": "'$FILE_CONTENT'"
+              "postman_collection": '$FILE_CONTENT'
             }
           }' \
           "$ANSIBLE_CONTROLLER_URL$ANSIBLE_JOB_TEMPLATE_ID/launch/")
 
         # Check if job was triggered successfully using Python
-        JOB_ID=$(python3 -c "import json, sys; print(json.loads('''$RESPONSE''').get('job', 'null'))")
+        JOB_ID=$(python3 -c "import json, sys; response=json.loads(sys.argv[1]); print(response.get('job', 'null'))" "$RESPONSE")
+
         if [ "$JOB_ID" != "null" ]; then
           echo "Ansible job triggered successfully. Job ID: $JOB_ID"
         else
