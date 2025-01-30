@@ -1,35 +1,24 @@
-- name: Parse Postman collection and run API requests
+- name: Run API requests
   hosts: localhost
   vars:
     bearer_token: "your_bearer_token_here"  # Replace with your bearer token
   tasks:
     - name: Debug received extra_vars
       debug:
-        var: postman_collection
-
-    - name: Parse Postman collection
-      set_fact:
-        api_requests: "{{ postman_collection.item }}"
-
-    - name: Debug parsed API requests
-      debug:
-        var: api_requests
+        var: extra_vars
 
     - name: Run API requests
       ansible.builtin.uri:
-        url: "{{ item.request.url }}"
-        method: "{{ item.request.method }}"
-        headers: >-
-          {{
-            item.request.header | items2dict(key_name='key', value_name='value') | combine({
-              'Authorization': 'Bearer ' + bearer_token
-            })
-          }}
-        body: "{{ item.request.body | default(omit) }}"
-        body_format: "{{ 'json' if item.request.body.mode == 'raw' else omit }}"
-        status_code: "{{ item.response | map(attribute='code') | list | default([200]) }}"
+        url: "{{ item.url }}"
+        method: "{{ item.method }}"
+        headers:
+          Content-Type: "application/json"
+          Authorization: "Bearer {{ bearer_token }}"
+        body: "{{ item.body | default(omit) }}"
+        body_format: json
+        status_code: 200
         validate_certs: no
-      loop: "{{ api_requests }}"
+      loop: "{{ extra_vars.requests }}"
       loop_control:
         label: "{{ item.name }}"
       register: api_results
