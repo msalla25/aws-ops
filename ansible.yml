@@ -1,42 +1,39 @@
-8- name: Debug raw Postman collection
-  debug:
-    var: postman_collection
+- name: Parse Postman collection and run API requests
+  hosts: localhost
+  vars:
+    bearer_token: "your_bearer_token_here"  # Replace with your bearer token
+  tasks:
+    - name: Decode base64-encoded Postman collection
+      set_fact:
+        decoded_postman_collection: "{{ postman_collection | b64decode }}"
 
-- name: Ensure postman_collection is parsed correctly
-  set_fact:
-    parsed_collection: "{{ postman_collection | from_json }}"
+    - name: Parse Postman collection
+      set_fact:
+        api_requests: "{{ decoded_postman_collection | from_json | json_query('item[*]') }}"
 
-- name: Debug parsed collection
-  debug:
-    var: parsed_collection
+    - name: Debug parsed API requests
+      debug:
+        var: api_requests
 
-- name: Extract API requests from Postman collection
-  set_fact:
-    api_requests: "{{ parsed_collection.item | default([]) }}"
+    - name: Run API requests
+      uri:
+        url: "{{ item.request.url.raw }}"
+        method: "{{ item.request.method }}"
+        headers: >-
+          {{
+            item.request.header | items2dict(key_name='key', value_name='value') | combine({
+              'Authorization': 'Bearer ' + bearer_token
+            })
+          }}
+        body: "{{ item.request.body.raw | default(omit) }}"
+        body_format: "{{ 'json' if item.request.body.mode == 'raw' else omit }}"
+        status_code: "{{ item.response | json_query('[].code') | default([200]) }}"
+        validate_certs: no
+      loop: "{{ api_requests }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: api_results
 
-- name: Debug API requests structure
-  debug:
-    var: api_requests
-
-- name: Run API requests
-  uri:
-    url: "{{ item.request.url.raw | default('') }}"
-    method: "{{ item.request.method | default('GET') }}"
-    headers: >-
-      {{
-        (item.request.header | default([]) | items2dict(key_name='key', value_name='value'))
-        | combine({'Authorization': 'Bearer ' + (bearer_token | default(''))})
-      }}
-    body: "{{ item.request.body.raw | default(omit) }}"
-    body_format: "{{ 'json' if (item.request.body is defined and item.request.body.mode == 'raw') else omit }}"
-    status_code: "{{ item.response | json_query('[].code') | default([200]) }}"
-    validate_certs: no
-  loop: "{{ api_requests }}"
-  loop_control:
-    label: "{{ item.name | default('Unnamed Request') }}"
-  register: api_results
-
-- name: Display API results
-  debug:
-    var: api_results
-python3 -c "print(open('file').read().replace('}', '\n'))"
+    - name: Display API results
+      debug:
+        var: api_results
