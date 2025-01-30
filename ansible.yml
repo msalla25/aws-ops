@@ -1,33 +1,29 @@
-- name: Run API tests using Postman collection
-  hosts: localhost
-  gather_facts: no
-  vars:
-    postman_collection: "{{ postman_collection | b64decode }}"
-    bearer_token: "your_bearer_token_here"  # Add your Bearer token here
-  tasks:
-    - name: Parse Postman collection
-      set_fact:
-        api_requests: "{{ postman_collection | from_json | json_query('item[*]') }}"
+- name: Parse Postman collection
+  set_fact:
+    api_requests: "{{ postman_collection | from_json | json_query('item') }}"
 
-    - name: Run API requests
-      uri:
-        url: "{{ item.request.url.raw }}"
-        method: "{{ item.request.method }}"
-        headers: >-
-          {{
-            item.request.header | items2dict(key_name='key', value_name='value') | combine({
-              'Authorization': 'Bearer ' + bearer_token
-            })
-          }}
-        body: "{{ item.request.body.raw | default(omit) }}"
-        body_format: "{{ 'json' if item.request.body.mode == 'raw' else omit }}"
-        status_code: "{{ item.response | json_query('[].code') | default([200]) }}"
-        validate_certs: no
-      loop: "{{ api_requests }}"
-      loop_control:
-        label: "{{ item.name }}"
-      register: api_results
+- name: Debug parsed Postman collection
+  debug:
+    var: api_requests
 
-    - name: Display API results
-      debug:
-        var: api_results
+- name: Run API requests
+  uri:
+    url: "{{ item.request.url.raw }}"
+    method: "{{ item.request.method }}"
+    headers: >-
+      {{
+        (item.request.header | default([]) | items2dict(key_name='key', value_name='value'))
+        | combine({'Authorization': 'Bearer ' + bearer_token})
+      }}
+    body: "{{ item.request.body.raw | default(omit) }}"
+    body_format: "{{ 'json' if (item.request.body is defined and item.request.body.mode == 'raw') else omit }}"
+    status_code: "{{ item.response | json_query('[].code') | default([200]) }}"
+    validate_certs: no
+  loop: "{{ api_requests }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: api_results
+
+- name: Display API results
+  debug:
+    var: api_results
