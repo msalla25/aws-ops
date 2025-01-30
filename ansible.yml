@@ -3,13 +3,9 @@
   vars:
     bearer_token: "your_bearer_token_here"  # Replace with your bearer token
   tasks:
-    - name: Decode base64-encoded Postman collection
-      set_fact:
-        decoded_postman_collection: "{{ postman_collection | b64decode }}"
-
     - name: Parse Postman collection
       set_fact:
-        api_requests: "{{ decoded_postman_collection | from_json | json_query('item[*]') }}"
+        api_requests: "{{ postman_collection | from_json | json_query('item[*]') }}"
 
     - name: Debug parsed API requests
       debug:
