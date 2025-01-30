@@ -4,46 +4,51 @@ stages:
 variables:
   ANSIBLE_CONTROLLER_URL: "https://ansible-controller.example.com/api/v2/job_templates/"  # Replace with your Ansible controller URL
   ANSIBLE_JOB_TEMPLATE_ID: "123"  # Replace with your Ansible job template ID
-  POSTMAN_COLLECTION_DIR: "src/test"  # Directory containing Postman collection files
+  POSTMAN_COLLECTION_DIR: "src/test"  # Directory containing YAML files
   ANSIBLE_API_TOKEN: "your_ansible_api_token_here"  # Replace with your Ansible API token
 
 run_api_tests:
   stage: test
   script:
     - |
-      # Install dependencies
-      apt-get update && apt-get install -y curl jq python3
+      # Install dependencies (if needed)
+      apt-get update && apt-get install -y curl python3 python3-yaml
 
-      # Loop through Postman collection files in /src/test
-      for file in $(find "$POSTMAN_COLLECTION_DIR" -name "*.json"); do
+      # Loop through YAML files in /src/test
+      for file in $(find $POSTMAN_COLLECTION_DIR -name "*.yaml"); do
         echo "Processing file: $file"
 
-        # Validate JSON
-        if ! jq -e . "$file" > /dev/null 2>&1; then
-          echo "Error: Invalid JSON in file $file"
-          exit 1
-        fi
+        # Read file content and parse YAML using Python
+        EXTRA_VARS=$(python3 <<EOF
+      import yaml
+      import json
 
-        # Read file content and format it properly
-        FILE_CONTENT=$(jq -c '.' "$file")
+      with open("$file", "r") as f:
+          data = yaml.safe_load(f)
 
-        # Prepare JSON payload
-        PAYLOAD=$(jq -n --argjson collection "$FILE_CONTENT" '{extra_vars: {postman_collection: $collection}}')
+      # Print the data as a JSON string
+      print(json.dumps(data))
+      EOF
+      )
 
-        # Call Ansible API
+        # Debug extra_vars
+        echo "Extra Vars: $EXTRA_VARS"
+
+        # Call Ansible controller API to trigger job with extra_vars
         RESPONSE=$(curl -s -X POST \
           -H "Content-Type: application/json" \
           -H "Authorization: Bearer $ANSIBLE_API_TOKEN" \
-          -d "$PAYLOAD" \
+          -d "$(jq -n \
+            --argjson extra_vars "$EXTRA_VARS" \
+            '{extra_vars: {requests: $extra_vars}}')" \
           "$ANSIBLE_CONTROLLER_URL$ANSIBLE_JOB_TEMPLATE_ID/launch/")
 
-        # Check if the job was triggered successfully
-        JOB_ID=$(echo "$RESPONSE" | jq -r '.job // empty')
-
-        if [[ -z "$JOB_ID" ]]; then
+        # Check if job was triggered successfully using Python
+        JOB_ID=$(python3 -c "import json, sys; print(json.loads('''$RESPONSE''').get('job', 'null'))")
+        if [ "$JOB_ID" != "null" ]; then
+          echo "Ansible job triggered successfully. Job ID: $JOB_ID"
+        else
           echo "Failed to trigger Ansible job. Response: $RESPONSE"
           exit 1
-        else
-          echo "Ansible job triggered successfully. Job ID: $JOB_ID"
         fi
       done
