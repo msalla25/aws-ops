@@ -11,30 +11,36 @@ run_api_tests:
   stage: test
   script:
     - |
-      # Install dependencies (if needed)
+      # Install dependencies
       apt-get update && apt-get install -y curl jq python3
 
       # Loop through Postman collection files in /src/test
-      for file in $(find $POSTMAN_COLLECTION_DIR -name "*.json"); do
+      for file in $(find "$POSTMAN_COLLECTION_DIR" -name "*.json"); do
         echo "Processing file: $file"
 
-        # Read file content and validate JSON using jq
-        if ! FILE_CONTENT=$(jq '.' "$file"); then
+        # Validate JSON
+        if ! jq -e . "$file" > /dev/null 2>&1; then
           echo "Error: Invalid JSON in file $file"
           exit 1
         fi
 
-        # Call Ansible controller API to trigger job with extra_vars
+        # Read file content and format it properly
+        FILE_CONTENT=$(jq -c '.' "$file")
+
+        # Prepare JSON payload
+        PAYLOAD=$(jq -n --argjson collection "$FILE_CONTENT" '{extra_vars: {postman_collection: $collection}}')
+
+        # Call Ansible API
         RESPONSE=$(curl -s -X POST \
           -H "Content-Type: application/json" \
           -H "Authorization: Bearer $ANSIBLE_API_TOKEN" \
-          -d "$(jq -n \
-            --argjson postman_collection "$FILE_CONTENT" \
-            '{extra_vars: {postman_collection: $postman_collection}}')" \
+          -d "$PAYLOAD" \
           "$ANSIBLE_CONTROLLER_URL$ANSIBLE_JOB_TEMPLATE_ID/launch/")
 
-        # Check if job was triggered successfully using jq
-        if ! JOB_ID=$(echo "$RESPONSE" | jq -r '.job'); then
+        # Check if the job was triggered successfully
+        JOB_ID=$(echo "$RESPONSE" | jq -r '.job // empty')
+
+        if [[ -z "$JOB_ID" ]]; then
           echo "Failed to trigger Ansible job. Response: $RESPONSE"
           exit 1
         else
