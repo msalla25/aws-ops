@@ -11,14 +11,14 @@ run_api_tests:
   script:
     - |
       # Install dependencies (if needed)
-      apt-get update && apt-get install -y curl jq
+      apt-get update && apt-get install -y curl python3
 
       # Loop through Postman collection files in /src/test
       for file in $(find $POSTMAN_COLLECTION_DIR -name "*.json"); do
         echo "Processing file: $file"
 
-        # Read file content and encode it for API request
-        FILE_CONTENT=$(cat $file | jq -c | base64 -w 0)
+        # Read file content and encode it for API request using Python
+        FILE_CONTENT=$(python3 -c "import json, base64; print(base64.b64encode(open('$file', 'rb').read()).decode('utf-8'))")
 
         # Call Ansible controller API to trigger job
         RESPONSE=$(curl -s -X POST \
@@ -31,8 +31,8 @@ run_api_tests:
           }' \
           "$ANSIBLE_CONTROLLER_URL$ANSIBLE_JOB_TEMPLATE_ID/launch/")
 
-        # Check if job was triggered successfully
-        JOB_ID=$(echo $RESPONSE | jq -r '.job')
+        # Check if job was triggered successfully using Python
+        JOB_ID=$(python3 -c "import json, sys; print(json.loads('''$RESPONSE''').get('job', 'null'))")
         if [ "$JOB_ID" != "null" ]; then
           echo "Ansible job triggered successfully. Job ID: $JOB_ID"
         else
