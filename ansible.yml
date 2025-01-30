@@ -3,9 +3,13 @@
   vars:
     bearer_token: "your_bearer_token_here"  # Replace with your bearer token
   tasks:
+    - name: Debug received extra_vars
+      debug:
+        var: postman_collection
+
     - name: Parse Postman collection
       set_fact:
-        api_requests: "{{ postman_collection | from_json }}"
+        api_requests: "{{ postman_collection.item }}"
 
     - name: Debug parsed API requests
       debug:
@@ -25,7 +29,7 @@
         body_format: "{{ 'json' if item.request.body.mode == 'raw' else omit }}"
         status_code: "{{ item.response | map(attribute='code') | list | default([200]) }}"
         validate_certs: no
-      loop: "{{ api_requests.item }}"
+      loop: "{{ api_requests }}"
       loop_control:
         label: "{{ item.name }}"
       register: api_results
