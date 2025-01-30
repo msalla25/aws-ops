@@ -18,7 +18,10 @@ run_api_tests:
         echo "Processing file: $file"
 
         # Read file content and ensure it's valid JSON for API request using Python
-        FILE_CONTENT=$(python3 -c "import json; print(json.dumps(json.load(open('$file')), separators=(',', ':')))")
+        FILE_CONTENT=$(python3 -c "import json, sys; print(json.dumps(json.load(open(sys.argv[1])), ensure_ascii=False))" "$file")
+
+        # Escape JSON properly for API request
+        FILE_CONTENT_ESCAPED=$(echo "$FILE_CONTENT" | sed 's/"/\\"/g')
 
         # Call Ansible controller API to trigger job
         RESPONSE=$(curl -s -X POST \
@@ -26,10 +29,13 @@ run_api_tests:
           -H "Authorization: Bearer $ANSIBLE_API_TOKEN" \
           -d '{
             "extra_vars": {
-              "postman_collection": '$FILE_CONTENT'
+              "postman_collection": "'"$FILE_CONTENT_ESCAPED"'"
             }
           }' \
           "$ANSIBLE_CONTROLLER_URL$ANSIBLE_JOB_TEMPLATE_ID/launch/")
+
+        # Debug response
+        echo "Response: $RESPONSE"
 
         # Check if job was triggered successfully using Python
         JOB_ID=$(python3 -c "import json, sys; response=json.loads(sys.argv[1]); print(response.get('job', 'null'))" "$RESPONSE")
