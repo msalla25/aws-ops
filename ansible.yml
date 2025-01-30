@@ -1,4 +1,4 @@
-- name: Debug raw Postman collection
+8- name: Debug raw Postman collection
   debug:
     var: postman_collection
 
@@ -39,3 +39,4 @@
 - name: Display API results
   debug:
     var: api_results
+python3 -c "print(open('file').read().replace('}', '\n'))"
