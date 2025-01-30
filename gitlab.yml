@@ -18,8 +18,42 @@ run_api_tests:
       for file in $(find $POSTMAN_COLLECTION_DIR -name "*.json"); do
         echo "Processing file: $file"
 
-        # Read file content and encode it for API request using Python
-        FILE_CONTENT=$(python3 -c "import json, base64; print(base64.b64encode(open('$file', 'rb').read()).decode('utf-8'))")
+        # Preprocess the file to extract relevant information
+        PROCESSED_CONTENT=$(python3 <<EOF
+      import re
+
+      with open("$file", "r") as f:
+          content = f.read()
+
+      # Extract URLs, methods, headers, and bodies using regex (customize as needed)
+      urls = re.findall(r'"url"\s*:\s*"([^"]+)"', content)
+      methods = re.findall(r'"method"\s*:\s*"([^"]+)"', content)
+      headers = re.findall(r'"header"\s*:\s*\[([^\]]+)\]', content)
+      bodies = re.findall(r'"body"\s*:\s*\{([^}]+)\}', content)
+
+      # Format the extracted data into a structured JSON-like format
+      structured_data = {
+          "item": [
+              {
+                  "request": {
+                      "url": urls[i],
+                      "method": methods[i],
+                      "header": headers[i] if i < len(headers) else [],
+                      "body": bodies[i] if i < len(bodies) else {}
+                  }
+              }
+              for i in range(len(urls))
+          ]
+      }
+
+      # Print the structured data as a JSON string
+      import json
+      print(json.dumps(structured_data))
+      EOF
+      )
+
+        # Encode the processed content for API request using Python
+        FILE_CONTENT=$(echo "$PROCESSED_CONTENT" | python3 -c "import base64, sys; print(base64.b64encode(sys.stdin.read().encode('utf-8')).decode('utf-8'))")
 
         # Prepare JSON payload with properly escaped content
         JSON_PAYLOAD=$(python3 -c "import json; print(json.dumps({'extra_vars': {'postman_collection': '$FILE_CONTENT'}}))")
