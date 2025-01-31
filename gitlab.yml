@@ -14,17 +14,37 @@ run_api_tests:
       # Install dependencies
       apt-get update && apt-get install -y curl jq
 
-      # Download and install yq (standalone binary)
-      YQ_VERSION="v4.34.1"  # Replace with the latest version if needed
-      curl -Lo /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
-      chmod +x /usr/local/bin/yq
+      # Function to parse YAML and convert to JSON
+      yaml_to_json() {
+        awk '
+        BEGIN {
+          FS=": ";
+          print "[";
+        }
+        {
+          if ($1 ~ /^- name:/) {
+            if (NR > 1) print ",";
+            print "{";
+          } else if ($1 ~ /  body:/) {
+            printf "\"body\": %s", $2;
+          } else if ($1 ~ /  method:/) {
+            printf "\"method\": \"%s\", ", $2;
+          } else if ($1 ~ /  url:/) {
+            printf "\"url\": \"%s\"", $2;
+          }
+        }
+        END {
+          print "}]";
+        }
+        ' "$1"
+      }
 
       # Loop through YAML files in /src/test
       for file in $(find $POSTMAN_COLLECTION_DIR -name "*.yaml"); do
         echo "Processing file: $file"
 
-        # Read file content and parse YAML using yq
-        EXTRA_VARS=$(yq eval -o=json '.' "$file")
+        # Parse YAML and convert to JSON
+        EXTRA_VARS=$(yaml_to_json "$file")
 
         # Debug extra_vars
         echo "Extra Vars: $EXTRA_VARS"
