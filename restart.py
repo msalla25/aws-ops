@@ -31,3 +31,9 @@ echo "Verifying ROCm installation..."
 /opt/rocm/opencl/bin/clinfo
 
 echo "ROCm installation script completed."
+
+sudo apt update
+sudo apt install -y wget gnupg
+wget -q -O - https://repo.radeon.com/rocm/rocm.gpg.key | sudo apt-key add -
+echo 'deb [arch=amd64] https://repo.radeon.com/rocm/apt/debian/ ubuntu main' | sudo tee /etc/apt/sources.list.d/rocm.list
+sudo apt update
