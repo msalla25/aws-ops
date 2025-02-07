@@ -145,3 +145,22 @@ resource "aws_iam_policy" "step_functions_policy" {
 
 resource "aws_iam_role_policy_attachment" "step_functions_policy_attachment" {
   role       = aws_iam_role.step_functions_role.name
+
+
+You can use the following Splunk query to extract response times ending with "msec" and calculate the 90th percentile response time:  
+
+```splunk
+index=<your_index> source=<your_log_source>
+| rex field=_raw "response time:\s*(?<response_time>\d+)msec"
+| eval response_time = tonumber(response_time)
+| eventstats perc90(response_time) as p90_response_time
+| table _time response_time p90_response_time
+```
+
+### Explanation:
+1. **`rex`**: Extracts response times using a regex pattern that captures numbers ending with "msec".
+2. **`eval`**: Converts the extracted response time to a numeric format.
+3. **`eventstats perc90`**: Calculates the 90th percentile response time across all events.
+4. **`table`**: Displays the timestamp, extracted response time, and the calculated 90th percentile.
+
+Let me know if you need modifications based on your log format!
