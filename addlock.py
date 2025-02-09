@@ -1,64 +1,69 @@
-import os
-import json
-import boto3
-import requests
-from base64 import b64encode
+#!/bin/bash
+
+# Exit on any error
+set -e
 
 # Get environment variables
-secret_name = os.environ.get("SECRET_NAME")
-region = os.environ.get("AWS_DEFAULT_REGION")
-
-# Initialize AWS Secrets Manager client (uses IAM role from GitLab runner)
-secrets_client = boto3.client("secretsmanager", region_name=region)
+SECRET_NAME="${SECRET_NAME}"
+REGION="${AWS_DEFAULT_REGION}"
+INPUT_FILE="${INPUT_FILE}"
+TOKEN_URL="https://api.example.com/oauth/token"  # Replace with your token URL
 
 # Fetch Basic Auth credentials from AWS Secrets Manager
-def get_secret():
-    response = secrets_client.get_secret_value(SecretId=secret_name)
-    secret = json.loads(response["SecretString"])
-    return secret["username"], secret["password"]
+get_secret() {
+    SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id "$SECRET_NAME" --region "$REGION" --query SecretString --output text)
+    USERNAME=$(echo "$SECRET_JSON" | jq -r .username)
+    PASSWORD=$(echo "$SECRET_JSON" | jq -r .password)
+}
 
 # Get Bearer token using Basic Authentication
-def get_bearer_token(username, password):
-    token_url = "https://api.example.com/oauth/token"  # Replace with your token URL
-    credentials = f"{username}:{password}"
-    encoded_creds = b64encode(credentials.encode()).decode()
+get_bearer_token() {
+    ENCODED_CREDS=$(echo -n "$USERNAME:$PASSWORD" | base64)
     
-    headers = {
-        "Authorization": f"Basic {encoded_creds}",
-        "Content-Type": "application/json"
-    }
+    RESPONSE=$(curl -s -X POST "$TOKEN_URL" \
+        -H "Authorization: Basic $ENCODED_CREDS" \
+        -H "Content-Type: application/json" \
+        -d '{}' )
     
-    response = requests.post(token_url, headers=headers, json={})
-    response.raise_for_status()  # Raise error if request fails
-    return response.json()["access_token"]
+    if echo "$RESPONSE" | jq -e .access_token > /dev/null; then
+        BEARER_TOKEN=$(echo "$RESPONSE" | jq -r .access_token)
+    else
+        echo "Error getting bearer token: $RESPONSE"
+        exit 1
+    fi
+}
 
 # Execute API calls
-def test_apis(bearer_token):
-    input_file = os.environ.get("INPUT_FILE")
-    
-    with open(input_file, "r") as f:
-        apis = json.load(f)
-    
-    for api in apis:
-        url = api["url"]
-        method = api["method"]
-        body = api.get("body", {})
+test_apis() {
+    if [[ ! -f "$INPUT_FILE" ]]; then
+        echo "Error: Input file not found!"
+        exit 1
+    fi
 
-        headers = {
-            "Authorization": f"Bearer {bearer_token}",
-            "Content-Type": "application/json"
-        }
-
-        response = requests.request(method, url, headers=headers, json=body)
-        print(f"API: {url} | Status Code: {response.status_code}")
-        print("Response:", response.json())
+    APIS=$(cat "$INPUT_FILE")
+    
+    echo "$APIS" | jq -c '.[]' | while read -r API; do
+        URL=$(echo "$API" | jq -r .url)
+        METHOD=$(echo "$API" | jq -r .method)
+        BODY=$(echo "$API" | jq -c .body)
+        
+        RESPONSE=$(curl -s -X "$METHOD" "$URL" \
+            -H "Authorization: Bearer $BEARER_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$BODY")
+        
+        STATUS_CODE=$(echo "$RESPONSE" | jq -r .status_code)
+        
+        echo "API: $URL | Status Code: $STATUS_CODE"
+        echo "Response: $RESPONSE"
+    done
+}
 
 # Main execution
-if __name__ == "__main__":
-    try:
-        username, password = get_secret()
-        bearer_token = get_bearer_token(username, password)
-        test_apis(bearer_token)
-    except Exception as e:
-        print(f"Error: {e}")
-        exit(1)
+main() {
+    get_secret
+    get_bearer_token
+    test_apis
+}
+
+main
