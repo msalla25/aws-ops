@@ -2,53 +2,16 @@ stages:
   - apigee-testing
 
 variables:
-  AWS_DEFAULT_REGION: "your-aws-region"  # Set your AWS region
+  AWS_DEFAULT_REGION: "us-east-1"        # Set your AWS region
   SECRET_NAME: "your-secret-name"        # Name of the secret in AWS Secrets Manager
   INPUT_FILE: "input.json"               # Path to the input file
 
 apigee_testing:
   stage: apigee-testing
-  image: python:3.9-slim  # Use a Python image for scripting
+  image: python:3.9-slim
   before_script:
     - apt-get update && apt-get install -y jq  # Install jq for JSON parsing
-    - pip install requests boto3  # Install required Python libraries
+    - pip install requests boto3               # Install Python dependencies
   script:
-    - |
-      # Fetch credentials from AWS Secrets Manager
-      echo "Fetching credentials from AWS Secrets Manager..."
-      CREDS=$(aws secretsmanager get-secret-value --secret-id $SECRET_NAME --query SecretString --output text)
-      USERNAME=$(echo $CREDS | jq -r '.username')
-      PASSWORD=$(echo $CREDS | jq -r '.password')
-
-      # Get Bearer token using Basic Authentication
-      echo "Fetching Bearer token..."
-      TOKEN_RESPONSE=$(curl -s -X POST \
-        -H "Authorization: Basic $(echo -n $USERNAME:$PASSWORD | base64)" \
-        -H "Content-Type: application/json" \
-        -d '{}' \
-        "https://api.example.com/oauth/token")  # Replace with your token endpoint
-      BEARER_TOKEN=$(echo $TOKEN_RESPONSE | jq -r '.access_token')
-
-      if [ -z "$BEARER_TOKEN" ]; then
-        echo "Failed to fetch Bearer token"
-        exit 1
-      fi
-
-      # Read input file and make API calls
-      echo "Reading input file and making API calls..."
-      APIS=$(cat $INPUT_FILE)
-      for API in $(echo "$APIS" | jq -c '.[]'); do
-        URL=$(echo $API | jq -r '.url')
-        METHOD=$(echo $API | jq -r '.method')
-        BODY=$(echo $API | jq -r '.body')
-
-        echo "Calling API: $URL"
-        RESPONSE=$(curl -s -X $METHOD \
-          -H "Authorization: Bearer $BEARER_TOKEN" \
-          -H "Content-Type: application/json" \
-          -d "$BODY" \
-          $URL)
-
-        echo "Response:"
-        echo $RESPONSE | jq
-      done
+    - python scripts/apigee_test.py            # Run the script (optional)
+    # OR keep the logic inline here if you prefer
