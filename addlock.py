@@ -4,19 +4,12 @@ import boto3
 import requests
 from base64 import b64encode
 
-# Fetch AWS credentials from GitLab CI variables
-aws_access_key = os.environ.get("AWS_ACCESS_KEY_ID")
-aws_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+# Get environment variables
 secret_name = os.environ.get("SECRET_NAME")
 region = os.environ.get("AWS_DEFAULT_REGION")
 
-# Initialize AWS Secrets Manager client
-session = boto3.Session(
-    aws_access_key_id=aws_access_key,
-    aws_secret_access_key=aws_secret_key,
-    region_name=region
-)
-secrets_client = session.client("secretsmanager")
+# Initialize AWS Secrets Manager client (uses IAM role from GitLab runner)
+secrets_client = boto3.client("secretsmanager", region_name=region)
 
 # Fetch Basic Auth credentials from AWS Secrets Manager
 def get_secret():
@@ -24,7 +17,7 @@ def get_secret():
     secret = json.loads(response["SecretString"])
     return secret["username"], secret["password"]
 
-# Get Bearer token
+# Get Bearer token using Basic Authentication
 def get_bearer_token(username, password):
     token_url = "https://api.example.com/oauth/token"  # Replace with your token URL
     credentials = f"{username}:{password}"
@@ -36,29 +29,36 @@ def get_bearer_token(username, password):
     }
     
     response = requests.post(token_url, headers=headers, json={})
+    response.raise_for_status()  # Raise error if request fails
     return response.json()["access_token"]
 
 # Execute API calls
 def test_apis(bearer_token):
-    with open(os.environ.get("INPUT_FILE"), "r") as f:
+    input_file = os.environ.get("INPUT_FILE")
+    
+    with open(input_file, "r") as f:
         apis = json.load(f)
     
     for api in apis:
         url = api["url"]
         method = api["method"]
-        body = api["body"]
-        
+        body = api.get("body", {})
+
         headers = {
             "Authorization": f"Bearer {bearer_token}",
             "Content-Type": "application/json"
         }
-        
+
         response = requests.request(method, url, headers=headers, json=body)
         print(f"API: {url} | Status Code: {response.status_code}")
         print("Response:", response.json())
 
-# Main flow
+# Main execution
 if __name__ == "__main__":
-    username, password = get_secret()
-    bearer_token = get_bearer_token(username, password)
-    test_apis(bearer_token)
+    try:
+        username, password = get_secret()
+        bearer_token = get_bearer_token(username, password)
+        test_apis(bearer_token)
+    except Exception as e:
+        print(f"Error: {e}")
+        exit(1)
