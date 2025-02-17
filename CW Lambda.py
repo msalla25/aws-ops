@@ -1,28 +1,79 @@
-import json
-import boto3
+---
+- name: Connect to Managed Automation URL using PFX and CA certificates
+  hosts: localhost
+  gather_facts: no
+  vars:
+    ma_url: "{{ survey_ma_url }}"  # MA URL from survey
+    pfx_password: "{{ survey_pfx_password }}"  # PFX password from survey
+    pfx_file_path: "/opt/certs/certificate.pfx"  # Path to the PFX file
+    ca_cert_file_path: "/opt/certs/ca_certs.pem"  # Path to the CA certificates file
+    certs_dir: "/opt/certs/processed"  # Directory for processed certificates
 
-def lambda_handler(event, context):
-    # Extract relevant information from the CloudWatch event
-    cluster_name = event['detail']['clusterName']
-    service_name = event['detail']['serviceName']
-    
-    # Initialize Step Functions client
-    client = boto3.client('stepfunctions')
-    
-    # Define input for Step Function execution
-    input_data = {
-        "ClusterName": cluster_name,
-        "ServiceToRestart": service_name
-    }
-    
-    # Start the Step Function execution
-    response = client.start_execution(
-        stateMachineArn='arn:aws:states:REGION:ACCOUNT_ID:stateMachine:YOUR_STATE_MACHINE_NAME',
-        name='cloudwatch-trigger-' + context.aws_request_id,
-        input=json.dumps(input_data)
-    )
-    
-    return {
-        'statusCode': 200,
-        'body': json.dumps('State machine execution started')
-    }
+  tasks:
+    - name: Ensure certificates directory exists
+      file:
+        path: "{{ certs_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: Ensure PFX file exists
+      stat:
+        path: "{{ pfx_file_path }}"
+      register: pfx_file
+
+    - name: Fail if PFX file does not exist
+      fail:
+        msg: "PFX file not found at {{ pfx_file_path }}"
+      when: not pfx_file.stat.exists
+
+    - name: Ensure CA certificates file exists
+      stat:
+        path: "{{ ca_cert_file_path }}"
+      register: ca_cert_file
+
+    - name: Fail if CA certificates file does not exist
+      fail:
+        msg: "CA certificates file not found at {{ ca_cert_file_path }}"
+      when: not ca_cert_file.stat.exists
+
+    - name: Extract certificate and key from PFX file using OpenSSL
+      shell: |
+        openssl pkcs12 -in "{{ pfx_file_path }}" -out "{{ certs_dir }}/ma_cert.pem" -nodes -password pass:"{{ pfx_password }}"
+      args:
+        executable: /bin/bash
+      register: pfx_extract
+
+    - name: Fail if PFX extraction fails
+      fail:
+        msg: "Failed to extract certificate and key from PFX file"
+      when: pfx_extract.rc != 0
+
+    - name: Combine extracted certificate with CA certificates
+      shell: |
+        cat "{{ certs_dir }}/ma_cert.pem" "{{ ca_cert_file_path }}" > "{{ certs_dir }}/combined_cert.pem"
+      args:
+        executable: /bin/bash
+      register: combine_certs
+
+    - name: Fail if combining certificates fails
+      fail:
+        msg: "Failed to combine extracted certificate with CA certificates"
+      when: combine_certs.rc != 0
+
+    - name: Connect to MA URL using the combined certificate and key
+      uri:
+        url: "{{ ma_url }}"
+        method: GET
+        client_cert: "{{ certs_dir }}/combined_cert.pem"
+        client_key: "{{ certs_dir }}/ma_cert.pem"
+        validate_certs: yes
+      register: ma_response
+
+    - name: Display MA URL response
+      debug:
+        var: ma_response
+
+    - name: Clean up processed certificates
+      file:
+        path: "{{ certs_dir }}"
+        state: absent
