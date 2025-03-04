@@ -1,29 +1,32 @@
 import json
 import boto3
 
+ecs_client = boto3.client('ecs')
+
 def lambda_handler(event, context):
-    # Extract relevant information from API Gateway request
-    body = json.loads(event['body'])
-    cluster_name = body['ClusterName']
-    service_name = body['ServiceToRestart']
-    
-    # Initialize Step Functions client
-    client = boto3.client('stepfunctions')
-    
-    # Define input for Step Function execution
-    input_data = {
-        "ClusterName": cluster_name,
-        "ServiceToRestart": service_name
-    }
-    
-    # Start the Step Function execution
-    response = client.start_execution(
-        stateMachineArn='arn:aws:states:REGION:ACCOUNT_ID:stateMachine:YOUR_STATE_MACHINE_NAME',
-        name='api-gateway-trigger-' + context.aws_request_id,
-        input=json.dumps(input_data)
-    )
-    
-    return {
-        'statusCode': 200,
-        'body': json.dumps('State machine execution started')
-    }
+    try:
+        # Parse input from the API Gateway event
+        body = json.loads(event['body'])
+        cluster = body['cluster']
+        service = body['service']  # Only one service per cluster
+
+        # Restart the service in the cluster
+        ecs_client.update_service(
+            cluster=cluster,
+            service=service,
+            forceNewDeployment=True
+        )
+        print(f"Restarted service: {service} in cluster: {cluster}")
+
+        # Return a success response
+        return {
+            'statusCode': 200,
+            'body': json.dumps({'message': f'Service {service} restarted successfully in cluster {cluster}'})
+        }
+
+    except Exception as e:
+        # Return an error response if something goes wrong
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'error': str(e)})
+        }
