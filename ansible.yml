@@ -1,28 +1,35 @@
-- name: Run API requests
+---
+- name: Update JSON payloads and send email
   hosts: localhost
+  gather_facts: no
   vars:
-    bearer_token: "your_bearer_token_here"  # Replace with your bearer token
+    json_file: "sample_payload.json"
+    csv_file: "data_fields.csv"
+    output_file: "output_payloads.txt"
+    recipient_email: "recipient@example.com"  # Replace with the recipient's email
+    sender_email: "noreply@localhost"         # Sender email (can be anything for local mail server)
+    smtp_host: "localhost"                    # Local mail server
+    smtp_port: 25                             # Default SMTP port for local mail server
+
   tasks:
-    - name: Debug received extra_vars
-      debug:
-        var: extra_vars
+    - name: Install required Python packages
+      pip:
+        name:
+          - pandas
+        state: present
 
-    - name: Run API requests
-      ansible.builtin.uri:
-        url: "{{ item.url }}"
-        method: "{{ item.method }}"
-        headers:
-          Content-Type: "application/json"
-          Authorization: "Bearer {{ bearer_token }}"
-        body: "{{ item.body | default(omit) }}"
-        body_format: json
-        status_code: 200
-        validate_certs: no
-      loop: "{{ extra_vars.requests }}"
-      loop_control:
-        label: "{{ item.name }}"
-      register: api_results
+    - name: Run the Python script to update JSON payloads
+      command: >
+        python update_payloads.py
+        {{ json_file }} {{ csv_file }} {{ output_file }}
 
-    - name: Display API results
-      debug:
-        var: api_results
+    - name: Send email with the output file as an attachment
+      community.general.mail:
+        host: "{{ smtp_host }}"
+        port: "{{ smtp_port }}"
+        subject: "Updated JSON Payloads"
+        body: "Please find the updated JSON payloads attached."
+        from: "{{ sender_email }}"
+        to: "{{ recipient_email }}"
+        attach:
+          - "{{ output_file }}"
