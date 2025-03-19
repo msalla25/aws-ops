@@ -12,15 +12,29 @@
     smtp_port: 25                             # Default SMTP port for local mail server
 
   tasks:
+    - name: Install pip if not present
+      become: yes
+      apt:
+        name: python3-pip
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Install pip if not present (RedHat)
+      become: yes
+      yum:
+        name: python3-pip
+        state: present
+      when: ansible_os_family == "RedHat"
+
     - name: Install required Python packages
       pip:
         name:
           - pandas
-        state: present
+        executable: pip3
 
     - name: Run the Python script to update JSON payloads
       command: >
-        python update_payloads.py
+        python3 update_payloads.py
         {{ json_file }} {{ csv_file }} {{ output_file }}
 
     - name: Send email with the output file as an attachment
