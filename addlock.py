@@ -19,11 +19,16 @@ def update_json_payload(json_payload, csv_row):
         json_payload['nested_field']['nested_field1'] = csv_row['Column3']
         json_payload['nested_field']['nested_field2'] = csv_row['Column4']
         json_payload['nested_field']['nested_field3'] = csv_row['Column5']
+        
+        # Update deeply nested fields under 'nested_field.deeply_nested_field'
+        if 'deeply_nested_field' in json_payload['nested_field'] and isinstance(json_payload['nested_field']['deeply_nested_field'], dict):
+            json_payload['nested_field']['deeply_nested_field']['deeply_nested_field1'] = csv_row['Column6']
+            json_payload['nested_field']['deeply_nested_field']['deeply_nested_field2'] = csv_row['Column7']
     
     # Update nested fields under 'another_nested_field'
     if 'another_nested_field' in json_payload and isinstance(json_payload['another_nested_field'], dict):
-        json_payload['another_nested_field']['nested_field4'] = csv_row['Column6']
-        json_payload['another_nested_field']['nested_field5'] = csv_row['Column7']
+        json_payload['another_nested_field']['nested_field4'] = csv_row['Column8']
+        json_payload['another_nested_field']['nested_field5'] = csv_row['Column9']
     
     return json_payload
 
