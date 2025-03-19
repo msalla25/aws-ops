@@ -1,17 +1,13 @@
 stages:
-  - apigee-testing
+  - update-payloads
 
-variables:
-  AWS_DEFAULT_REGION: "us-east-1"        # Set your AWS region
-  SECRET_NAME: "your-secret-name"        # Name of the secret in AWS Secrets Manager
-  INPUT_FILE: "input.json"               # Path to the input file
-
-apigee_testing:
-  stage: apigee-testing
+update-payloads:
+  stage: update-payloads
   image: python:3.9-slim
   before_script:
-    - apt-get update && apt-get install -y jq  # Install jq for JSON parsing
-    - pip install requests boto3               # Install Python dependencies
+    - apt-get update && apt-get install -y ansible postfix
+    - ansible-galaxy collection install community.general
   script:
-    - python scripts/apigee_test.py            # Run the script (optional)
-    # OR keep the logic inline here if you prefer
+    - ansible-playbook playbook.yml
+  only:
+    - main
