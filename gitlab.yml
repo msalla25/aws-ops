@@ -3,11 +3,27 @@ stages:
 
 update-payloads:
   stage: update-payloads
-  image: python:3.9-slim
+  image: python:3.9-slim  # Use a Python Docker image
   before_script:
-    - apt-get update && apt-get install -y ansible postfix
-    - ansible-galaxy collection install community.general
+    # Install system dependencies
+    - apt-get update && apt-get install -y git postfix mailutils
+    # Create a virtual environment
+    - python -m venv venv
+    - source venv/bin/activate
+    # Install required Python packages in the virtual environment
+    - pip install --upgrade pip
+    - pip install pandas ansible
+
   script:
+    # Run the Python script to update JSON payloads
+    - python update_payloads.py
+    # Run the Ansible playbook
     - ansible-playbook playbook.yml
+
+  artifacts:
+    paths:
+      - output_payloads.txt  # Save the output file as an artifact
+    expire_in: 1 week  # Artifacts will be deleted after 1 week
+
   only:
-    - main
+    - main  # Run this job only on the main branch
