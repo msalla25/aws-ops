@@ -7,6 +7,8 @@ update-payloads:
   before_script:
     # Install system dependencies
     - apt-get update && apt-get install -y git postfix mailutils
+    # Create a symbolic link from python to python3
+    - ln -s /usr/local/bin/python3 /usr/local/bin/python
     # Create a virtual environment
     - python -m venv venv
     - source venv/bin/activate
