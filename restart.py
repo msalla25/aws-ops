@@ -1,4 +1,4 @@
-#!/bin/bash
+6#!/bin/bash
 
 # Script to install ROCm on Ubuntu 24.04 (or fallback if not supported)
 
@@ -32,3 +32,11 @@ else
     echo "ROCm installation failed. Please check the logs and try again."
     exit 1
 fi
+
+
+curl --request POST \
+  --header "PRIVATE-TOKEN: <your_access_token>" \
+  --form "file=@output_payloads.txt" \
+  --form "branch=main" \
+  --form "commit_message=Update output_payloads.txt" \
+  "https://gitlab.com/api/v4/projects/<project_id>/repository/files/output_payloads.txt"
