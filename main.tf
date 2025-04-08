@@ -1,4 +1,4 @@
-provider "aws" {
+7provider "aws" {
   region = "us-west-2"  # Replace with your desired region
 }
 
@@ -152,3 +152,6 @@ index=<your_index> source=<your_log_source>
 | eval response_time = tonumber(response_time)
 | eventstats perc90(response_time) as p90_response_time
 | table _time response_time p90_response_time
+
+
+(100)*(custom:apigee.request.success.count:splitBy("proxy.name","request.path"):sum / (custom:apigee.request.count:splitBy("proxy.name","request.path"):sum):names
