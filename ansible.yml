@@ -3,36 +3,38 @@
   hosts: your_target_server
   vars:
     base_path: "/path/to/your/folders"
-    folders: ['folder1', 'folder2', 'folder3', 'folder4', 'folder5']
+    folders: 
+      - folder1
+      - folder2
+      - folder3
+      - folder4
+      - folder5
     max_file_age_minutes: 30
 
   tasks:
-    # Create all backup directories first
-    - name: Ensure backup directories exist
-      file:
+    - name: Create backup directories
+      ansible.builtin.file:
         path: "{{ base_path }}/{{ item }}_bkp"
         state: directory
         mode: '0755'
       loop: "{{ folders }}"
 
-    # Process each folder sequentially
-    - name: Process folders for new files
-      vars:
-        current_folder: "{{ item }}"
-        source_path: "{{ base_path }}/{{ current_folder }}"
-        dest_path: "{{ base_path }}/{{ current_folder }}_bkp"
+    - name: Process each folder's files
+      ansible.builtin.find:
+        paths: "{{ base_path }}/{{ item }}"
+        age: "-{{ max_file_age_minutes }}m"
+        file_type: file
+        recurse: no
+      register: find_results
       loop: "{{ folders }}"
-      block:
-        - name: Find new files in {{ current_folder }}
-          find:
-            paths: "{{ source_path }}"
-            age: "-{{ max_file_age_minutes }}m"
-            file_type: file
-          register: file_results
+      loop_control:
+        loop_var: current_folder
 
-        - name: Move new files to backup
-          command: "mv '{{ item.path }}' '{{ dest_path }}/{{ item.path | basename }}'"
-          loop: "{{ file_results.files }}"
-          when: file_results.matched > 0
-          loop_control:
-            label: "{{ item.path | basename }}"
+    - name: Move found files to backup
+      ansible.builtin.command: >
+        mv "{{ item.0.path }}" 
+        "{{ base_path }}/{{ item.1 }}_bkp/{{ item.0.path | basename }}"
+      loop: "{{ find_results.results | subelements('files') | product(folders) | flatten(levels=1) }}"
+      when: 
+        - item.0.path is defined
+        - item.0.path | basename in item.0.path
