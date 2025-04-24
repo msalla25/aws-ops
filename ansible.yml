@@ -1,38 +1,114 @@
 ---
-- name: Reliable File Mover
+- name: Ultimate File Processor
   hosts: your_target_server
   vars:
     base_path: "/path/to/your/folders"
-    folders: ["folder1", "folder2", "folder3", "folder4", "folder5"]
+    folders:
+      - "folder1"
+      - "folder2"
+      - "folder3"
+      - "folder4"
+      - "folder5"
     max_file_age_minutes: 30
 
   tasks:
-    # First create all backup directories
-    - name: Ensure backup directories exist
-      file:
-        path: "{{ base_path }}/{{ item }}_bkp"
-        state: directory
-      loop: "{{ folders }}"
-
-    # Main file processing
-    - name: Process each folder
+    # ========================
+    # TASK 1: Move New Files to Backup (Run every 20 minutes)
+    # ========================
+    - name: Handle new files
       vars:
-        current_folder: "{{ item }}"
+        current_folder: "{{ folder }}"
         source_dir: "{{ base_path }}/{{ current_folder }}"
         backup_dir: "{{ base_path }}/{{ current_folder }}_bkp"
       loop: "{{ folders }}"
-      tasks:
-        - name: Find new files in {{ current_folder }}
-          find:
+      loop_control:
+        loop_var: folder
+        label: "Processing {{ folder }}"
+      block:
+        - name: Find recent files
+          ansible.builtin.find:
             paths: "{{ source_dir }}"
             age: "-{{ max_file_age_minutes }}m"
             file_type: file
             recurse: no
-          register: file_results
+          register: find_results
 
         - name: Move files to backup
-          command: "mv '{{ file.path }}' '{{ backup_dir }}/{{ file.path | basename }}'"
-          loop: "{{ file_results.files }}"
+          ansible.builtin.command:
+            cmd: "mv '{{ file.path }}' '{{ backup_dir }}/{{ file.path | basename }}'"
+          loop: "{{ find_results.files }}"
           loop_control:
             loop_var: file
-          when: file_results.matched > 0
+            label: "{{ file.path | basename }}"
+          when: find_results.matched > 0
+
+    # ========================
+    # TASK 2: Process Oldest File (Run hourly)
+    # ========================
+    - name: Handle old files
+      vars:
+        current_folder: "{{ folder }}"
+        source_dir: "{{ base_path }}/{{ current_folder }}"
+        backup_dir: "{{ base_path }}/{{ current_folder }}_bkp"
+      loop: "{{ folders }}"
+      loop_control:
+        loop_var: folder
+        label: "Checking {{ folder }}"
+      block:
+        - name: Check for new files in dropzone
+          ansible.builtin.find:
+            paths: "{{ source_dir }}"
+            age: "-{{ max_file_age_minutes }}m"
+            file_type: file
+            recurse: no
+          register: new_files_check
+          changed_when: false
+
+        - name: Find oldest backup file
+          ansible.builtin.find:
+            paths: "{{ backup_dir }}"
+            file_type: file
+            recurse: no
+            age: "+{{ max_file_age_minutes }}m"
+            sort: "asc"
+            sort_key: "mtime"
+          register: old_files
+          when: new_files_check.matched == 0
+
+        - name: Move oldest file to processing
+          ansible.builtin.command:
+            cmd: "mv '{{ old_files.files[0].path }}' '{{ source_dir }}/{{ old_files.files[0].path | basename }}'"
+          when: 
+            - new_files_check.matched == 0
+            - old_files.matched > 0
+
+    # ========================
+    # TASK 3: Reprocess by Date (Manual trigger)
+    # ========================
+    - name: Date-based reprocessing
+      vars:
+        target_date: "{{ reprocess_date }}"
+        current_folder: "{{ folder }}"
+        backup_dir: "{{ base_path }}/{{ current_folder }}_bkp"
+        source_dir: "{{ base_path }}/{{ current_folder }}"
+      loop: "{{ folders }}"
+      loop_control:
+        loop_var: folder
+        label: "Reprocessing {{ folder }}"
+      block:
+        - name: Find dated files
+          ansible.builtin.find:
+            paths: "{{ backup_dir }}"
+            patterns: "*{{ target_date }}*"
+            recurse: no
+            file_type: file
+          register: date_files
+
+        - name: Move dated files
+          ansible.builtin.command:
+            cmd: "mv '{{ file.path }}' '{{ source_dir }}/{{ file.path | basename }}'"
+          loop: "{{ date_files.files }}"
+          loop_control:
+            loop_var: file
+          when: date_files.matched > 0
+      when: reprocess_date is defined
