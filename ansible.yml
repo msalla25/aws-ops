@@ -12,30 +12,24 @@
     max_file_age_minutes: 30
 
   tasks:
-    - name: Process each folder to move new files to backup
-      block:
-        - name: Find new files in {{ current_folder }}
-          ansible.builtin.find:
-            paths: "{{ base_path }}/{{ current_folder }}"
-            age: "-{{ max_file_age_minutes }}m"
-            recurse: no
-            file_type: file
-          register: folder_files
-
-        - name: Display files found (debug)
-          ansible.builtin.debug:
-            var: folder_files.files
-          when: folder_files.matched > 0
-
-        - name: Move new files to backup folder
-          ansible.builtin.command: >
-            mv "{{ item.path }}" "{{ base_path }}/{{ current_folder }}_bkp/{{ item.path | basename }}"
-          loop: "{{ folder_files.files }}"
-          when: folder_files.matched > 0
-          loop_control:
-            label: "{{ item.path | basename }}"
-
+    # First find all new files in all folders
+    - name: Find new files in all folders
+      ansible.builtin.find:
+        paths: "{{ base_path }}/{{ item }}"
+        age: "-{{ max_file_age_minutes }}m"
+        recurse: no
+        file_type: file
+      register: found_files
       loop: "{{ folder_names }}"
       loop_control:
         loop_var: current_folder
-        label: "{{ current_folder }}"
+        label: "Checking {{ current_folder }}"
+
+    # Then process the results to move files
+    - name: Move new files to backup folders
+      ansible.builtin.command: >
+        mv "{{ item.0.path }}" "{{ base_path }}/{{ item.1 }}_bkp/{{ item.0.path | basename }}"
+      loop: "{{ found_files.results | subelements('files') }}"
+      when: item.0.path is defined
+      loop_control:
+        label: "Moving {{ item.0.path | basename }}"
