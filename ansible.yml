@@ -7,13 +7,12 @@
 
   tasks:
     - name: Create backup directories
-      shell: |
-        mkdir -p {{ base_path }}/{{ item }}_bkp
+      file:
+        path: "{{ base_path }}/{{ item }}_bkp"
+        state: directory
       loop: "{{ folders }}"
 
-    - name: Move new files to backup
+    - name: Move new files using find + mv
       shell: |
-        find {{ base_path }}/{{ item }} -type f -mmin -30 -exec mv {} {{ base_path }}/{{ item }}_bkp \;
+        find "{{ base_path }}/{{ item }}" -type f -mmin -30 -exec mv -v "{}" "{{ base_path }}/{{ item }}_bkp" \;
       loop: "{{ folders }}"
-      args:
-        warn: false  # Displays cleaner output
