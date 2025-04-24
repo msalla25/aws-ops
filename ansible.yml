@@ -1,54 +1,38 @@
 ---
-- name: Reliable File Movement to Backup Folders
+- name: Move New Files to Backup Folders
   hosts: your_target_server
   vars:
     base_path: "/path/to/your/folders"
-    folder_names:
-      - folder1
-      - folder2
-      - folder3
-      - folder4
-      - folder5
+    folders: ['folder1', 'folder2', 'folder3', 'folder4', 'folder5']
     max_file_age_minutes: 30
 
   tasks:
-    # First ensure backup directories exist
-    - name: Create backup directories
-      ansible.builtin.file:
+    # Create all backup directories first
+    - name: Ensure backup directories exist
+      file:
         path: "{{ base_path }}/{{ item }}_bkp"
         state: directory
         mode: '0755'
-      loop: "{{ folder_names }}"
-      tags: setup
+      loop: "{{ folders }}"
 
-    # Main file processing with explicit variable handling
-    - name: Process each folder individually
-      loop: "{{ folder_names }}"
-      loop_control:
-        loop_var: current_folder
-        label: "Processing {{ current_folder }}"
-      tags: move
+    # Process each folder sequentially
+    - name: Process folders for new files
+      vars:
+        current_folder: "{{ item }}"
+        source_path: "{{ base_path }}/{{ current_folder }}"
+        dest_path: "{{ base_path }}/{{ current_folder }}_bkp"
+      loop: "{{ folders }}"
       block:
         - name: Find new files in {{ current_folder }}
-          ansible.builtin.find:
-            paths: "{{ base_path }}/{{ current_folder }}"
+          find:
+            paths: "{{ source_path }}"
             age: "-{{ max_file_age_minutes }}m"
-            recurse: no
             file_type: file
-          register: folder_files
+          register: file_results
 
-        - name: Show found files (debug)
-          ansible.builtin.debug:
-            var: folder_files.files
-          when: folder_files.matched > 0
-
-        - name: Move files to backup
-          ansible.builtin.command:
-            cmd: >
-              mv "{{ file_item.path }}" 
-              "{{ base_path }}/{{ current_folder }}_bkp/{{ file_item.path | basename }}"
-          loop: "{{ folder_files.files }}"
+        - name: Move new files to backup
+          command: "mv '{{ item.path }}' '{{ dest_path }}/{{ item.path | basename }}'"
+          loop: "{{ file_results.files }}"
+          when: file_results.matched > 0
           loop_control:
-            loop_var: file_item
-            label: "{{ file_item.path | basename }}"
-          when: folder_files.matched > 0
+            label: "{{ item.path | basename }}"
