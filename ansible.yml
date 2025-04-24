@@ -4,18 +4,18 @@
   vars:
     base_path: "/path/to/main/folder"
     folders:
-      - "folder1"
-      - "folder2"
-      - "folder3"
-      - "folder4"
-      - "folder5"
+      - folder1
+      - folder2
+      - folder3
+      - folder4
+      - folder5
     max_file_age_minutes: 30
 
   tasks:
-    # Create backup directories if missing
+    # Create backup directories
     - name: Ensure backup directories exist
       ansible.builtin.file:
-        path: "{{ base_path }}/{{ folder }}_bkp"
+        path: "{{ base_path }}/{{ item }}_bkp"
         state: directory
         mode: '0755'
       loop: "{{ folders }}"
@@ -23,19 +23,15 @@
         loop_var: folder
 
     # Find and move new files
-    - name: Process files in each folder
-      vars:
-        current_folder: "{{ folder }}"
-        source_path: "{{ base_path }}/{{ current_folder }}"
-        backup_path: "{{ base_path }}/{{ current_folder }}_bkp"
+    - name: Process folders
       loop: "{{ folders }}"
       loop_control:
-        loop_var: folder
-        label: "PROCESSING {{ folder }}"
-      tasks:
+        loop_var: current_folder
+        label: "Processing {{ current_folder }}"
+      block:
         - name: Find recent files
           ansible.builtin.find:
-            paths: "{{ source_path }}"
+            paths: "{{ base_path }}/{{ current_folder }}"
             age: "-{{ max_file_age_minutes }}m"
             file_type: file
             recurse: no
@@ -43,12 +39,13 @@
 
         - name: Move files to backup
           ansible.builtin.command:
-            cmd: "mv '{{ file.path }}' '{{ backup_path }}/{{ file.path | basename }}'"
+            cmd: >
+              mv "{{ item.path }}"
+              "{{ base_path }}/{{ current_folder }}_bkp/{{ item.path | basename }}"
           loop: "{{ file_scan.files }}"
-          loop_control:
-            loop_var: file
-            label: "{{ file.path | basename }}"
           when: file_scan.matched > 0
+          loop_control:
+            label: "{{ item.path | basename }}"
           args:
-            removes: "{{ file.path }}"
-            creates: "{{ backup_path }}/{{ file.path | basename }}"
+            removes: "{{ item.path }}"
+            creates: "{{ base_path }}/{{ current_folder }}_bkp/{{ item.path | basename }}"
