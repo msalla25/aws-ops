@@ -1,51 +1,19 @@
 ---
-- name: File Backup Automation
+- name: Simple File Backup
   hosts: your_target_server
   vars:
-    base_path: "/path/to/main/folder"
-    folders:
-      - folder1
-      - folder2
-      - folder3
-      - folder4
-      - folder5
-    max_file_age_minutes: 30
+    base_path: "/path/to/folders"
+    folders: ["folder1", "folder2", "folder3", "folder4", "folder5"]
 
   tasks:
-    # Create backup directories
-    - name: Ensure backup directories exist
-      ansible.builtin.file:
-        path: "{{ base_path }}/{{ item }}_bkp"
-        state: directory
-        mode: '0755'
+    - name: Create backup directories
+      shell: |
+        mkdir -p {{ base_path }}/{{ item }}_bkp
       loop: "{{ folders }}"
-      loop_control:
-        loop_var: folder
 
-    # Find and move new files
-    - name: Process folders
+    - name: Move new files to backup
+      shell: |
+        find {{ base_path }}/{{ item }} -type f -mmin -30 -exec mv {} {{ base_path }}/{{ item }}_bkp \;
       loop: "{{ folders }}"
-      loop_control:
-        loop_var: current_folder
-        label: "Processing {{ current_folder }}"
-      block:
-        - name: Find recent files
-          ansible.builtin.find:
-            paths: "{{ base_path }}/{{ current_folder }}"
-            age: "-{{ max_file_age_minutes }}m"
-            file_type: file
-            recurse: no
-          register: file_scan
-
-        - name: Move files to backup
-          ansible.builtin.command:
-            cmd: >
-              mv "{{ item.path }}"
-              "{{ base_path }}/{{ current_folder }}_bkp/{{ item.path | basename }}"
-          loop: "{{ file_scan.files }}"
-          when: file_scan.matched > 0
-          loop_control:
-            label: "{{ item.path | basename }}"
-          args:
-            removes: "{{ item.path }}"
-            creates: "{{ base_path }}/{{ current_folder }}_bkp/{{ item.path | basename }}"
+      args:
+        warn: false  # Displays cleaner output
