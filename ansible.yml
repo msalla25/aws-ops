@@ -1,40 +1,38 @@
 ---
-- name: Move New Files to Backup Folders
+- name: Reliable File Mover
   hosts: your_target_server
   vars:
     base_path: "/path/to/your/folders"
-    folders: 
-      - folder1
-      - folder2
-      - folder3
-      - folder4
-      - folder5
+    folders: ["folder1", "folder2", "folder3", "folder4", "folder5"]
     max_file_age_minutes: 30
 
   tasks:
-    - name: Create backup directories
-      ansible.builtin.file:
+    # First create all backup directories
+    - name: Ensure backup directories exist
+      file:
         path: "{{ base_path }}/{{ item }}_bkp"
         state: directory
-        mode: '0755'
       loop: "{{ folders }}"
 
-    - name: Process each folder's files
-      ansible.builtin.find:
-        paths: "{{ base_path }}/{{ item }}"
-        age: "-{{ max_file_age_minutes }}m"
-        file_type: file
-        recurse: no
-      register: find_results
+    # Main file processing
+    - name: Process each folder
+      vars:
+        current_folder: "{{ item }}"
+        source_dir: "{{ base_path }}/{{ current_folder }}"
+        backup_dir: "{{ base_path }}/{{ current_folder }}_bkp"
       loop: "{{ folders }}"
-      loop_control:
-        loop_var: current_folder
+      tasks:
+        - name: Find new files in {{ current_folder }}
+          find:
+            paths: "{{ source_dir }}"
+            age: "-{{ max_file_age_minutes }}m"
+            file_type: file
+            recurse: no
+          register: file_results
 
-    - name: Move found files to backup
-      ansible.builtin.command: >
-        mv "{{ item.0.path }}" 
-        "{{ base_path }}/{{ item.1 }}_bkp/{{ item.0.path | basename }}"
-      loop: "{{ find_results.results | subelements('files') | product(folders) | flatten(levels=1) }}"
-      when: 
-        - item.0.path is defined
-        - item.0.path | basename in item.0.path
+        - name: Move files to backup
+          command: "mv '{{ file.path }}' '{{ backup_dir }}/{{ file.path | basename }}'"
+          loop: "{{ file_results.files }}"
+          loop_control:
+            loop_var: file
+          when: file_results.matched > 0
