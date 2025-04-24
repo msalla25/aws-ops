@@ -1,17 +1,29 @@
 ---
-- name: Send email with updated JSON payloads
-  hosts: localhost
-  gather_facts: no
+- name: Move new files to backup folders
+  hosts: your_target_server
   vars:
-    output_file: "output_payloads.txt"
-    recipient_email: "recipient@example.com"
-    sender_email: "noreply@localhost"
+    base_path: "/path/to/your/folders"
+    folder_names:
+      - folder1
+      - folder2
+      - folder3
+      - folder4
+      - folder5
+    max_file_age_minutes: 30
 
   tasks:
-    - name: Send email with the output file as an attachment
-      shell: |
-        echo "Please find the updated JSON payloads attached." | mailx \
-        -s "Updated JSON Payloads" \
-        -a "{{ output_file }}" \
-        -r "{{ sender_email }}" \
-        "{{ recipient_email }}"
+    - name: Find files younger than {{ max_file_age_minutes }} minutes
+      find:
+        paths: "{{ base_path }}/{{ item }}"
+        age: "-{{ max_file_age_minutes }}m"
+        recurse: no
+        file_type: file
+      register: new_files
+      loop: "{{ folder_names }}"
+      loop_control:
+        loop_var: current_folder
+
+    - name: Move new files to backup folders
+      command: "mv {{ item.path }} {{ base_path }}/{{ current_folder }}_bkp/{{ item.path | basename }}"
+      loop: "{{ new_files.results | selectattr('matched', 'defined') | map(attribute='files') | flatten }}"
+      when: item.matched > 0
