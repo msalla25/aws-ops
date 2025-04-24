@@ -12,18 +12,20 @@
     max_file_age_minutes: 30
 
   tasks:
-    - name: Find files younger than {{ max_file_age_minutes }} minutes
-      find:
-        paths: "{{ base_path }}/{{ item }}"
-        age: "-{{ max_file_age_minutes }}m"
-        recurse: no
-        file_type: file
-      register: new_files
-      loop: "{{ folder_names }}"
+    - name: Find and move new files in each folder
+      block:
+        - name: Find files younger than {{ max_file_age_minutes }} minutes in {{ current_folder }}
+          find:
+            paths: "{{ base_path }}/{{ current_folder }}"
+            age: "-{{ max_file_age_minutes }}m"
+            recurse: no
+            file_type: file
+          register: new_files
 
-    - name: Move new files to backup folders
-      vars:
-        current_folder: "{{ item.item }}"
-      command: "mv {{ item.file.path }} {{ base_path }}/{{ current_folder }}_bkp/{{ item.file.path | basename }}"
-      loop: "{{ new_files.results | selectattr('files', 'defined') | map(attribute='files') | flatten | products(folder_names) | map('combine', {'file': item[0], 'folder': item[1]}) | selectattr('file.matched', 'defined') }}"
-      when: item.file.matched > 0
+        - name: Move found files to backup
+          command: "mv {{ item.path }} {{ base_path }}/{{ current_folder }}_bkp/{{ item.path | basename }}"
+          loop: "{{ new_files.files }}"
+          when: new_files.matched > 0
+      loop: "{{ folder_names }}"
+      loop_control:
+        loop_var: current_folder
