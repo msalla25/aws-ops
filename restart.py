@@ -1,40 +1,47 @@
-#!/bin/bash
+---
+- name: Process two files in parallel
+  hosts: localhost
+  vars:
+    file1: "/path/to/file1.json"
+    file2: "/path/to/file2.json"
 
-# Check if input file is provided
-if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 <input_csv_file>"
-    exit 1
-fi
+  tasks:
+    - name: Get line counts
+      ansible.builtin.shell: |
+        wc -l < "{{ file1 }}"
+        wc -l < "{{ file2 }}"
+      register: line_counts
+      changed_when: false
 
-input_file="$1"
-output_prefix="output_"
+    - name: Set maximum lines
+      ansible.builtin.set_fact:
+        max_lines: "{{ [line_counts.stdout_lines[0]|int, line_counts.stdout_lines[1]|int]|max }}"
 
-# Check if input file exists
-if [ ! -f "$input_file" ]; then
-    echo "Error: File '$input_file' not found!"
-    exit 1
-fi
+    - name: Process records
+      include_tasks: process_apis.yaml
+      loop: "{{ range(0, max_lines)|list }}"
+      loop_control:
+        loop_var: line_number
 
-# Calculate number of lines (excluding header)
-total_lines=$(tail -n +2 "$input_file" | wc -l)
-lines_per_file=$(( (total_lines + 9) / 10 ))
 
-# Get header
-header=$(head -n 1 "$input_file")
+---
+- name: Get current lines
+  ansible.builtin.set_fact:
+    line1: "{{ lookup('file', file1).split('\n')[line_number] | default('') }}"
+    line2: "{{ lookup('file', file2).split('\n')[line_number] | default('') }}"
 
-# Split the file
-echo "Splitting '$input_file' into 10 parts..."
-awk -v lpf="$lines_per_file" -v header="$header" -v out_prefix="$output_prefix" '
-    BEGIN { file_num=1 }
-    NR == 1 { next }  # Skip header (we already have it)
-    (NR-2) % lpf == 0 {
-        close(outfile)
-        outfile = out_prefix file_num ".csv"
-        print header > outfile
-        file_num++
-    }
-    { print > outfile }
-' "$input_file"
+- name: Call first endpoint (if line exists)
+  ansible.builtin.uri:
+    url: "https://api.example.com/endpoint1"
+    method: POST
+    body: "{{ line1 }}"
+    body_format: json
+  when: line1|length > 0
 
-echo "Done! Created files:"
-ls "${output_prefix}"*.csv
+- name: Call second endpoint (if line exists)
+  ansible.builtin.uri:
+    url: "https://api.example.com/endpoint2"
+    method: POST
+    body: "{{ line2 }}"
+    body_format: json
+  when: line2|length > 0
