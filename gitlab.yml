@@ -48,3 +48,26 @@ generate-jboss-report:
                       'JNDI': ds.get('jndi-name'),
                       'Enabled': ds.get('enabled'),
                       'ConnectionURL': ds.xpath('.//ds:connection-url/text()', namespaces=ns)[0] if ds.xpath('.//ds:connection-url/text()', name
+
+
+stages:
+  - report
+
+generate-jboss-report:
+  stage: report
+  image: python:3.9-slim
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends python3-dev libxml2-dev libxslt1-dev gcc
+    - pip install --no-cache-dir lxml pandas openpyxl
+  script:
+    - |
+      cat << 'EOF' > parse_jboss_config.py
+      # [Previous Python script content remains exactly the same]
+      EOF
+    - python parse_jboss_config.py standalone.xml jboss_config_report.xlsx
+  artifacts:
+    paths:
+      - jboss_config_report.xlsx
+    expire_in: 1 week
+  only:
+    - main
