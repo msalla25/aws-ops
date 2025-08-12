@@ -1,37 +1,64 @@
----
-- name: Process two JSON files alternately
-  hosts: localhost
-  vars:
-    file1: "/path/to/file1.txt"
-    file2: "/path/to/file2.txt"
+stages:
+  - convert
 
-  tasks:
-    - name: Read both files into variables
-      ansible.builtin.set_fact:
-        payloads1: "{{ lookup('file', file1).split('\n') | select('match', '.+') | list }}"
-        payloads2: "{{ lookup('file', file2).split('\n') | select('match', '.+') | list }}"
-        max_lines: "{{ [payloads1|length, payloads2|length]|max }}"
+xml-to-json:
+  stage: convert
+  image: python:3.9-slim
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends python3-lxml
+  script:
+    - |
+      cat << 'EOF' > convert_xml_to_json.py
+      import json
+      from lxml import etree
+      import sys
+      from collections import OrderedDict
 
-    - name: Process records
-      include_tasks: process_apis.yaml
-      loop: "{{ range(0, max_lines)|list }}"
-      loop_control:
-        loop_var: index
+      def xml_to_dict(element):
+          """Convert XML element to Python dict"""
+          result = OrderedDict()
+          result['@tag'] = element.tag
+          if element.attrib:
+              result['@attributes'] = dict(element.attrib)
+          if element.text and element.text.strip():
+              result['@text'] = element.text.strip()
+          
+          children = list(element)
+          if children:
+              for child in children:
+                  child_dict = xml_to_dict(child)
+                  child_tag = child.tag
+                  if child_tag in result:
+                      if not isinstance(result[child_tag], list):
+                          result[child_tag] = [result[child_tag]]
+                      result[child_tag].append(child_dict)
+                  else:
+                      result[child_tag] = child_dict
+          return result
 
-
----
-- name: Call first endpoint
-  ansible.builtin.uri:
-    url: "https://api.example.com/endpoint1"
-    method: POST
-    body: "{{ payloads1[index] if index < payloads1|length else '{}' }}"
-    body_format: json
-    status_code: 200
-
-- name: Call second endpoint
-  ansible.builtin.uri:
-    url: "https://api.example.com/endpoint2"
-    method: POST
-    body: "{{ payloads2[index] if index < payloads2|length else '{}' }}"
-    body_format: json
-    status_code: 200
+      if __name__ == '__main__':
+          if len(sys.argv) != 3:
+              print("Usage: python convert_xml_to_json.py <input.xml> <output.json>")
+              sys.exit(1)
+          
+          input_file = sys.argv[1]
+          output_file = sys.argv[2]
+          
+          try:
+              tree = etree.parse(input_file)
+              root = tree.getroot()
+              xml_dict = xml_to_dict(root)
+              
+              with open(output_file, 'w') as f:
+                  json.dump(xml_dict, f, indent=2)
+              
+              print(f"Successfully converted {input_file} to {output_file}")
+          except Exception as e:
+              print(f"Error: {str(e)}")
+              sys.exit(1)
+      EOF
+    - python convert_xml_to_json.py standalone.xml config.json
+  artifacts:
+    paths:
+      - config.json
+    expire_in: 1 week
