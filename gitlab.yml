@@ -1,31 +1,129 @@
 stages:
-  - update-payloads
+  - report
 
-update-payloads:
-  stage: update-payloads
-  image: python:3.9-slim  # Use a Python Docker image
+generate-jboss-report:
+  stage: report
+  image: python:3.9-slim
   before_script:
-    # Install system dependencies
-    - apt-get update && apt-get install -y git postfix mailutils
-    # Create a symbolic link from python to python3
-    - ln -s /usr/local/bin/python3 /usr/local/bin/python
-    # Create a virtual environment
-    - python -m venv venv
-    - source venv/bin/activate
-    # Install required Python packages in the virtual environment
-    - pip install --upgrade pip
-    - pip install pandas ansible
-
+    - apt-get update -y && apt-get install -y python3-pip
+    - pip install pandas openpyxl lxml
   script:
-    # Run the Python script to update JSON payloads
-    - python update_payloads.py
-    # Run the Ansible playbook
-    - ansible-playbook playbook.yml
+    - |
+      cat << 'EOF' > parse_jboss_config.py
+      import pandas as pd
+      from lxml import etree
+      import sys
 
+      def parse_standalone_xml(xml_file):
+          # Parse the XML file
+          tree = etree.parse(xml_file)
+          root = tree.getroot()
+
+          # Initialize data structures
+          data = {
+              'Datasources': [],
+              'Artemis_AMQ': [],
+              'SystemProperties': [],
+              'SocketBindings': [],
+              'JMS_Queues': [],
+              'JMS_Topics': []
+          }
+
+          # Namespace handling - adjust these based on your JBoss/WildFly version
+          ns = {
+              'ds': 'urn:jboss:domain:datasources:4.0',
+              'messaging': 'urn:jboss:domain:messaging-activemq:12.0',  # For Artemis
+              'ee': 'urn:jboss:domain:ee:4.0',
+              'server': 'urn:jboss:domain:4.2'
+          }
+
+          # Extract Datasources
+          for ds in root.xpath('//ds:datasource', namespaces=ns):
+              ds_data = {
+                  'Name': ds.get('jndi-name'),
+                  'JNDI': ds.get('jndi-name'),
+                  'Enabled': ds.get('enabled'),
+                  'ConnectionURL': ds.xpath('.//ds:connection-url/text()', namespaces=ns)[0] if ds.xpath('.//ds:connection-url/text()', namespaces=ns) else '',
+                  'Driver': ds.xpath('.//ds:driver/text()', namespaces=ns)[0] if ds.xpath('.//ds:driver/text()', namespaces=ns) else '',
+                  'Username': ds.xpath('.//ds:security/ds:user-name/text()', namespaces=ns)[0] if ds.xpath('.//ds:security/ds:user-name/text()', namespaces=ns) else '',
+                  'MinPoolSize': ds.xpath('.//ds:pool/ds:min-pool-size/text()', namespaces=ns)[0] if ds.xpath('.//ds:pool/ds:min-pool-size/text()', namespaces=ns) else '',
+                  'MaxPoolSize': ds.xpath('.//ds:pool/ds:max-pool-size/text()', namespaces=ns)[0] if ds.xpath('.//ds:pool/ds:max-pool-size/text()', namespaces=ns) else '',
+                  'TransactionIsolation': ds.xpath('.//ds:transaction-isolation/text()', namespaces=ns)[0] if ds.xpath('.//ds:transaction-isolation/text()', namespaces=ns) else ''
+              }
+              data['Datasources'].append(ds_data)
+
+          # Extract Artemis AMQ Configuration
+          for server in root.xpath('//messaging:server', namespaces=ns):
+              amq_data = {
+                  'Name': server.get('name'),
+                  'PersistenceEnabled': server.xpath('.//messaging:journal/@persistence-enabled', namespaces=ns)[0] if server.xpath('.//messaging:journal/@persistence-enabled', namespaces=ns) else '',
+                  'JournalDirectory': server.xpath('.//messaging:journal/@journal-directory', namespaces=ns)[0] if server.xpath('.//messaging:journal/@journal-directory', namespaces=ns) else '',
+                  'BindingsDirectory': server.xpath('.//messaging:bindings/@directory', namespaces=ns)[0] if server.xpath('.//messaging:bindings/@directory', namespaces=ns) else '',
+                  'LargeMessagesDirectory': server.xpath('.//messaging:large-messages/@directory', namespaces=ns)[0] if server.xpath('.//messaging:large-messages/@directory', namespaces=ns) else '',
+                  'PagingDirectory': server.xpath('.//messaging:paging/@directory', namespaces=ns)[0] if server.xpath('.//messaging:paging/@directory', namespaces=ns) else '',
+                  'ConnectorName': server.xpath('.//messaging:http-connector/@name', namespaces=ns)[0] if server.xpath('.//messaging:http-connector/@name', namespaces=ns) else '',
+                  'SocketBinding': server.xpath('.//messaging:http-connector/@socket-binding', namespaces=ns)[0] if server.xpath('.//messaging:http-connector/@socket-binding', namespaces=ns) else '',
+                  'Endpoint': server.xpath('.//messaging:http-connector/@endpoint', namespaces=ns)[0] if server.xpath('.//messaging:http-connector/@endpoint', namespaces=ns) else ''
+              }
+              data['Artemis_AMQ'].append(amq_data)
+
+              # Extract JMS Queues
+              for queue in server.xpath('.//messaging:jms-queue', namespaces=ns):
+                  data['JMS_Queues'].append({
+                      'Name': queue.get('name'),
+                      'Entries': ', '.join(queue.xpath('.//messaging:entry/text()', namespaces=ns)),
+                      'Durable': queue.get('durable', 'true')
+                  })
+
+              # Extract JMS Topics
+              for topic in server.xpath('.//messaging:jms-topic', namespaces=ns):
+                  data['JMS_Topics'].append({
+                      'Name': topic.get('name'),
+                      'Entries': ', '.join(topic.xpath('.//messaging:entry/text()', namespaces=ns))
+                  })
+
+          # Extract System Properties
+          for prop in root.xpath('//system-properties/property'):
+              data['SystemProperties'].append({
+                  'Name': prop.get('name'),
+                  'Value': prop.get('value')
+              })
+
+          # Extract Socket Bindings
+          for binding in root.xpath('//socket-binding'):
+              data['SocketBindings'].append({
+                  'Name': binding.get('name'),
+                  'Port': binding.get('port'),
+                  'Interface': binding.get('interface'),
+                  'MulticastPort': binding.get('multicast-port'),
+                  'MulticastAddress': binding.get('multicast-address')
+              })
+
+          return data
+
+      def generate_excel_report(data, output_file):
+          with pd.ExcelWriter(output_file) as writer:
+              for sheet_name, sheet_data in data.items():
+                  if sheet_data:  # Only create sheet if there's data
+                      df = pd.DataFrame(sheet_data)
+                      df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+      if __name__ == '__main__':
+          if len(sys.argv) != 3:
+              print("Usage: python parse_jboss_config.py <input.xml> <output.xlsx>")
+              sys.exit(1)
+          
+          input_file = sys.argv[1]
+          output_file = sys.argv[2]
+          
+          config_data = parse_standalone_xml(input_file)
+          generate_excel_report(config_data, output_file)
+          print(f"Report generated successfully: {output_file}")
+      EOF
+    - python parse_jboss_config.py standalone.xml jboss_config_report.xlsx
   artifacts:
     paths:
-      - output_payloads.txt  # Save the output file as an artifact
-    expire_in: 1 week  # Artifacts will be deleted after 1 week
-
+      - jboss_config_report.xlsx
+    expire_in: 1 week
   only:
-    - main  # Run this job only on the main branch
+    - main
