@@ -5,8 +5,8 @@ generate-jboss-report:
   stage: report
   image: python:3.9-slim
   before_script:
-    - apt-get update -y && apt-get install -y python3-pip
-    - pip install pandas openpyxl lxml
+    - apt update && apt install -y --no-install-recommends python3-pip python3-lxml
+    - pip install --no-cache-dir pandas openpyxl
   script:
     - |
       cat << 'EOF' > parse_jboss_config.py
@@ -16,8 +16,12 @@ generate-jboss-report:
 
       def parse_standalone_xml(xml_file):
           # Parse the XML file
-          tree = etree.parse(xml_file)
-          root = tree.getroot()
+          try:
+              tree = etree.parse(xml_file)
+              root = tree.getroot()
+          except Exception as e:
+              print(f"Error parsing XML file: {e}")
+              sys.exit(1)
 
           # Initialize data structures
           data = {
@@ -32,98 +36,15 @@ generate-jboss-report:
           # Namespace handling - adjust these based on your JBoss/WildFly version
           ns = {
               'ds': 'urn:jboss:domain:datasources:4.0',
-              'messaging': 'urn:jboss:domain:messaging-activemq:12.0',  # For Artemis
-              'ee': 'urn:jboss:domain:ee:4.0',
+              'messaging': 'urn:jboss:domain:messaging-activemq:12.0',
               'server': 'urn:jboss:domain:4.2'
           }
 
           # Extract Datasources
           for ds in root.xpath('//ds:datasource', namespaces=ns):
-              ds_data = {
-                  'Name': ds.get('jndi-name'),
-                  'JNDI': ds.get('jndi-name'),
-                  'Enabled': ds.get('enabled'),
-                  'ConnectionURL': ds.xpath('.//ds:connection-url/text()', namespaces=ns)[0] if ds.xpath('.//ds:connection-url/text()', namespaces=ns) else '',
-                  'Driver': ds.xpath('.//ds:driver/text()', namespaces=ns)[0] if ds.xpath('.//ds:driver/text()', namespaces=ns) else '',
-                  'Username': ds.xpath('.//ds:security/ds:user-name/text()', namespaces=ns)[0] if ds.xpath('.//ds:security/ds:user-name/text()', namespaces=ns) else '',
-                  'MinPoolSize': ds.xpath('.//ds:pool/ds:min-pool-size/text()', namespaces=ns)[0] if ds.xpath('.//ds:pool/ds:min-pool-size/text()', namespaces=ns) else '',
-                  'MaxPoolSize': ds.xpath('.//ds:pool/ds:max-pool-size/text()', namespaces=ns)[0] if ds.xpath('.//ds:pool/ds:max-pool-size/text()', namespaces=ns) else '',
-                  'TransactionIsolation': ds.xpath('.//ds:transaction-isolation/text()', namespaces=ns)[0] if ds.xpath('.//ds:transaction-isolation/text()', namespaces=ns) else ''
-              }
-              data['Datasources'].append(ds_data)
-
-          # Extract Artemis AMQ Configuration
-          for server in root.xpath('//messaging:server', namespaces=ns):
-              amq_data = {
-                  'Name': server.get('name'),
-                  'PersistenceEnabled': server.xpath('.//messaging:journal/@persistence-enabled', namespaces=ns)[0] if server.xpath('.//messaging:journal/@persistence-enabled', namespaces=ns) else '',
-                  'JournalDirectory': server.xpath('.//messaging:journal/@journal-directory', namespaces=ns)[0] if server.xpath('.//messaging:journal/@journal-directory', namespaces=ns) else '',
-                  'BindingsDirectory': server.xpath('.//messaging:bindings/@directory', namespaces=ns)[0] if server.xpath('.//messaging:bindings/@directory', namespaces=ns) else '',
-                  'LargeMessagesDirectory': server.xpath('.//messaging:large-messages/@directory', namespaces=ns)[0] if server.xpath('.//messaging:large-messages/@directory', namespaces=ns) else '',
-                  'PagingDirectory': server.xpath('.//messaging:paging/@directory', namespaces=ns)[0] if server.xpath('.//messaging:paging/@directory', namespaces=ns) else '',
-                  'ConnectorName': server.xpath('.//messaging:http-connector/@name', namespaces=ns)[0] if server.xpath('.//messaging:http-connector/@name', namespaces=ns) else '',
-                  'SocketBinding': server.xpath('.//messaging:http-connector/@socket-binding', namespaces=ns)[0] if server.xpath('.//messaging:http-connector/@socket-binding', namespaces=ns) else '',
-                  'Endpoint': server.xpath('.//messaging:http-connector/@endpoint', namespaces=ns)[0] if server.xpath('.//messaging:http-connector/@endpoint', namespaces=ns) else ''
-              }
-              data['Artemis_AMQ'].append(amq_data)
-
-              # Extract JMS Queues
-              for queue in server.xpath('.//messaging:jms-queue', namespaces=ns):
-                  data['JMS_Queues'].append({
-                      'Name': queue.get('name'),
-                      'Entries': ', '.join(queue.xpath('.//messaging:entry/text()', namespaces=ns)),
-                      'Durable': queue.get('durable', 'true')
-                  })
-
-              # Extract JMS Topics
-              for topic in server.xpath('.//messaging:jms-topic', namespaces=ns):
-                  data['JMS_Topics'].append({
-                      'Name': topic.get('name'),
-                      'Entries': ', '.join(topic.xpath('.//messaging:entry/text()', namespaces=ns))
-                  })
-
-          # Extract System Properties
-          for prop in root.xpath('//system-properties/property'):
-              data['SystemProperties'].append({
-                  'Name': prop.get('name'),
-                  'Value': prop.get('value')
-              })
-
-          # Extract Socket Bindings
-          for binding in root.xpath('//socket-binding'):
-              data['SocketBindings'].append({
-                  'Name': binding.get('name'),
-                  'Port': binding.get('port'),
-                  'Interface': binding.get('interface'),
-                  'MulticastPort': binding.get('multicast-port'),
-                  'MulticastAddress': binding.get('multicast-address')
-              })
-
-          return data
-
-      def generate_excel_report(data, output_file):
-          with pd.ExcelWriter(output_file) as writer:
-              for sheet_name, sheet_data in data.items():
-                  if sheet_data:  # Only create sheet if there's data
-                      df = pd.DataFrame(sheet_data)
-                      df.to_excel(writer, sheet_name=sheet_name, index=False)
-
-      if __name__ == '__main__':
-          if len(sys.argv) != 3:
-              print("Usage: python parse_jboss_config.py <input.xml> <output.xlsx>")
-              sys.exit(1)
-          
-          input_file = sys.argv[1]
-          output_file = sys.argv[2]
-          
-          config_data = parse_standalone_xml(input_file)
-          generate_excel_report(config_data, output_file)
-          print(f"Report generated successfully: {output_file}")
-      EOF
-    - python parse_jboss_config.py standalone.xml jboss_config_report.xlsx
-  artifacts:
-    paths:
-      - jboss_config_report.xlsx
-    expire_in: 1 week
-  only:
-    - main
+              try:
+                  ds_data = {
+                      'Name': ds.get('jndi-name'),
+                      'JNDI': ds.get('jndi-name'),
+                      'Enabled': ds.get('enabled'),
+                      'ConnectionURL': ds.xpath('.//ds:connection-url/text()', namespaces=ns)[0] if ds.xpath('.//ds:connection-url/text()', name
