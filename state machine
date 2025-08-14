@@ -1,58 +1,61 @@
-{
-  "Comment": "State machine to handle ECS service deployment, ensuring only one deployment at a time",
-  "StartAt": "Check Deployment Status",
-  "States": {
-    "Check Deployment Status": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::ecs:describeServices",
-      "Parameters": {
-        "Cluster": "YOUR_CLUSTER_NAME",  // Replace with your ECS cluster name
-        "Services": [
-          "SERVICE_A",  // Replace with actual service names
-          "SERVICE_B"
-        ]
-      },
-      "ResultPath": "$.ServiceStatus",
-      "Next": "Is Deployment In Progress"
-    },
-    "Is Deployment In Progress": {
-      "Type": "Choice",
-      "Choices": [
-        {
-          "Variable": "$.ServiceStatus.services[0].deployments[0].status",
-          "StringEquals": "PRIMARY",
-          "Next": "Wait for Deployment"
-        }
-      ],
-      "Default": "Start Deployment"
-    },
-    "Wait for Deployment": {
-      "Type": "Wait",
-      "Seconds": 30,
-      "Next": "Check Deployment Status"
-    },
-    "Start Deployment": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::ecs:updateService",
-      "Parameters": {
-        "Cluster": "YOUR_CLUSTER_NAME",  // Replace with your ECS cluster name
-        "Service": "$.ServiceName",
-        "ForceNewDeployment": true
-      },
-      "Next": "Wait for Completion"
-    },
-    "Wait for Completion": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::ecs:describeServices",
-      "Parameters": {
-        "Cluster": "YOUR_CLUSTER_NAME",  // Replace with your ECS cluster name
-        "Services": ["$.ServiceName"]
-      },
-      "ResultPath": "$.DeploymentStatus",
-      "Next": "Deployment Complete"
-    },
-    "Deployment Complete": {
-      "Type": "Succeed"
-    }
-  }
-}
+stages:
+  - build
+  - deploy
+
+build:
+  stage: build
+  script:
+    - python setup.py bdist_wheel
+    - WHL_FILE=$(ls dist/*.whl | head -n 1)
+    - echo "WHL_FILE=$WHL_FILE" >> build_info.env
+    - pip install twine
+    - twine upload --repository nexus $WHL_FILE
+  artifacts:
+    reports:
+      dotenv: build_info.env
+
+deploy:
+  stage: deploy
+  dependencies:
+    - build
+  image: python:3.11
+  before_script:
+    - pip install pywinrm requests boto3 jq
+  script:
+    # --- Fetch VM details from Terraform state (in S3 example) ---
+    - aws s3 cp s3://my-terraform-states/nutanix_vm_state.json vm_state.json
+    - VM_HOST=$(jq -r '.resources[] | select(.type=="nutanix_vm") | .instances[0].attributes.ip_address' vm_state.json)
+    - echo "Deploying to VM: $VM_HOST"
+
+    # --- Get credentials from AWS Secrets Manager ---
+    - CREDS_JSON=$(aws secretsmanager get-secret-value --secret-id my-vm-secret --query SecretString --output text)
+    - VM_USER=$(echo $CREDS_JSON | jq -r '.username')
+    - VM_PASS=$(echo $CREDS_JSON | jq -r '.password')
+
+    # --- Download WHL from Nexus (exact version from build stage) ---
+    - curl -u $NEXUS_USER:$NEXUS_PASS -O "https://nexus.example.com/repository/pypi-group/${WHL_FILE}"
+
+    # --- Deploy WHL to Windows VM using WinRM ---
+    - python - <<'PYCODE'
+import os, sys, winrm
+
+vm_host = os.environ["VM_HOST"]
+vm_user = os.environ["VM_USER"]
+vm_pass = os.environ["VM_PASS"]
+whl_file = os.environ["WHL_FILE"]
+
+# Create WinRM session
+session = winrm.Session(vm_host, auth=(vm_user, vm_pass), transport='ntlm')
+
+# Download WHL on the VM from Nexus and install it
+nexus_url = f"https://nexus.example.com/repository/pypi-group/{os.path.basename(whl_file)}"
+cmds = [
+    f"Invoke-WebRequest -Uri '{nexus_url}' -OutFile 'C:\\Temp\\{os.path.basename(whl_file)}' -UseBasicParsing",
+    f"pip install C:\\Temp\\{os.path.basename(whl_file)} --upgrade"
+]
+
+for cmd in cmds:
+    result = session.run_ps(cmd)
+    print(result.std_out.decode(), result.std_err.decode(), sep="\n")
+
+PYCODE
