@@ -1,4 +1,4 @@
-stages:
+681-27-1674stages:
   - build
   - deploy
 
@@ -190,6 +190,46 @@ package_version = os.environ["PACKAGE_VERSION"]
 session = winrm.Session(vm_host, auth=(vm_user, vm_pass), transport='ntlm')
 
 cmd = f'pip install {package_name}=={package_version} --upgrade'
+result = session.run_ps(cmd)
+
+print(result.std_out.decode())
+print(result.std_err.decode())
+PYCODE
+deploy:
+  stage: deploy
+  image: python:3.11
+  needs: ["build"]
+  before_script:
+    - pip install pywinrm requests
+  script:
+    - echo "Deploying $PACKAGE_NAME==$PACKAGE_VERSION to Windows VM"
+    - |
+      python - <<'PYCODE'
+import os
+import winrm
+
+vm_host = os.environ["DEPLOY_HOST"]
+vm_user = os.environ["DEPLOY_USER"]
+vm_pass = os.environ["DEPLOY_PASS"]
+package_name = os.environ["PACKAGE_NAME"]
+package_version = os.environ["PACKAGE_VERSION"]
+
+# Path on Windows VM where the venv is located
+target_path = r"C:\MyApp"
+venv_path = r"C:\MyApp\venv"
+
+session = winrm.Session(vm_host, auth=(vm_user, vm_pass), transport='ntlm')
+
+# PowerShell commands:
+# 1. Change to target path
+# 2. Activate venv
+# 3. Install the wheel
+cmd = f"""
+cd {target_path};
+& {venv_path}\\Scripts\\Activate.ps1;
+pip install {package_name}=={package_version} --upgrade
+"""
+
 result = session.run_ps(cmd)
 
 print(result.std_out.decode())
