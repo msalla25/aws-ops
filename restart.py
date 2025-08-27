@@ -77,3 +77,5 @@ deploy:
         .venv\\Scripts\\activate &&
         pip install mypkg.whl
       "
+script:
+  - pwsh -Command "Invoke-Command -ComputerName myvm.domain.com -UseSSL -Port 443 -Credential (Get-Credential) -ScriptBlock { cd C:\app; .venv\Scripts\activate; pip install mypkg.whl }"
