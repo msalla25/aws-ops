@@ -62,3 +62,18 @@ xml-to-json:
     paths:
       - config.json
     expire_in: 1 week
+deploy:
+  stage: deploy
+  variables:
+    DEPLOY_PATH: "C:\\app"   # change to your app path
+  script:
+    # Prompt user for credentials (interactive in GitLab UI)
+    - echo "Enter AD username:" && read USERNAME
+    - echo "Enter password:" && read -s PASSWORD
+
+    # Use SSH with AD credentials (via sshpass for automation)
+    - sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no "$USERNAME@windows-vm.domain.com" "
+        cd $DEPLOY_PATH &&
+        .venv\\Scripts\\activate &&
+        pip install mypkg.whl
+      "
