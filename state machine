@@ -61,3 +61,41 @@ deploy:
           pip install C:\Temp\$(Split-Path '${WHL_FILE}' -Leaf) --upgrade
         }
       "
+stages:
+  - build
+  - deploy
+
+build:
+  stage: build
+  image: python:3.11
+  script:
+    - python setup.py bdist_wheel
+    - ls dist/*.whl
+    # extract version from filename, e.g. mypkg-1.2.3-py3-none-any.whl
+    - WHL_FILE=$(ls dist/*.whl | head -n1)
+    - echo $WHL_FILE > whl_file.txt
+    - basename $WHL_FILE | cut -d- -f2 > whl_version.txt
+  artifacts:
+    paths:
+      - dist/*.whl
+      - whl_file.txt
+      - whl_version.txt
+    expire_in: 1 week
+
+deploy:
+  stage: deploy
+  needs: ["build"]
+  script:
+    # Read version from artifacts
+    - WHL_FILE=$(cat whl_file.txt)
+    - WHL_VERSION=$(cat whl_version.txt)
+    - echo "Deploying wheel version $WHL_VERSION"
+    # Example PowerShell remote copy + install
+    - pwsh -Command "
+        \$secpass = ConvertTo-SecureString '$DEPLOY_PASS' -AsPlainText -Force;
+        \$cred = New-Object System.Management.Automation.PSCredential('$DEPLOY_USER', \$secpass);
+        Copy-Item -ToSession (New-PSSession -ComputerName $VM_HOST -Credential \$cred -Authentication Negotiate) -Path $WHL_FILE -Destination 'C:\Temp\';
+        Invoke-Command -ComputerName $VM_HOST -Credential \$cred -Authentication Negotiate -ScriptBlock {
+          pip install C:\Temp\$(Split-Path '$WHL_FILE' -Leaf) --upgrade
+        }
+      "
