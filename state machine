@@ -1,3 +1,51 @@
+stages:
+  - build
+  - deploy
+
+build:
+  stage: build
+  image: python:3.11
+  script:
+    - python setup.py bdist_wheel
+    - WHL_FILE=$(ls dist/*.whl | head -n1)
+    - echo "WHL_FILE=$WHL_FILE" >> build_info.env
+    - basename $WHL_FILE | cut -d- -f1 > package_name.txt
+    - basename $WHL_FILE | cut -d- -f2 > package_version.txt
+    - echo "PACKAGE_NAME=$(cat package_name.txt)" >> build_info.env
+    - echo "PACKAGE_VERSION=$(cat package_version.txt)" >> build_info.env
+  artifacts:
+    reports:
+      dotenv: build_info.env
+    paths:
+      - dist/*.whl
+
+deploy:
+  stage: deploy
+  image: python:3.11
+  needs: ["build"]
+  before_script:
+    - pip install pywinrm requests
+  script:
+    - echo "Deploying $PACKAGE_NAME==$PACKAGE_VERSION to Windows VM"
+    - |
+      python - <<'PYCODE'
+import os
+import winrm
+
+vm_host = os.environ["DEPLOY_HOST"]
+vm_user = os.environ["DEPLOY_USER"]
+vm_pass = os.environ["DEPLOY_PASS"]
+package_name = os.environ["PACKAGE_NAME"]
+package_version = os.environ["PACKAGE_VERSION"]
+
+session = winrm.Session(vm_host, auth=(vm_user, vm_pass), transport='ntlm')
+
+cmd = f'pip install {package_name}=={package_version} --upgrade'
+result = session.run_ps(cmd)
+
+print(result.std_out.decode())
+print(result.std_err.decode())
+PYCODE
 deploy:
   stage: deploy
   dependencies:
@@ -99,3 +147,51 @@ deploy:
           pip install C:\Temp\$(Split-Path '$WHL_FILE' -Leaf) --upgrade
         }
       "
+stages:
+  - build
+  - deploy
+
+build:
+  stage: build
+  image: python:3.11
+  script:
+    - python setup.py bdist_wheel
+    - WHL_FILE=$(ls dist/*.whl | head -n1)
+    - echo "WHL_FILE=$WHL_FILE" >> build_info.env
+    - basename $WHL_FILE | cut -d- -f1 > package_name.txt
+    - basename $WHL_FILE | cut -d- -f2 > package_version.txt
+    - echo "PACKAGE_NAME=$(cat package_name.txt)" >> build_info.env
+    - echo "PACKAGE_VERSION=$(cat package_version.txt)" >> build_info.env
+  artifacts:
+    reports:
+      dotenv: build_info.env
+    paths:
+      - dist/*.whl
+
+deploy:
+  stage: deploy
+  image: python:3.11
+  needs: ["build"]
+  before_script:
+    - pip install pywinrm requests
+  script:
+    - echo "Deploying $PACKAGE_NAME==$PACKAGE_VERSION to Windows VM"
+    - |
+      python - <<'PYCODE'
+import os
+import winrm
+
+vm_host = os.environ["DEPLOY_HOST"]
+vm_user = os.environ["DEPLOY_USER"]
+vm_pass = os.environ["DEPLOY_PASS"]
+package_name = os.environ["PACKAGE_NAME"]
+package_version = os.environ["PACKAGE_VERSION"]
+
+session = winrm.Session(vm_host, auth=(vm_user, vm_pass), transport='ntlm')
+
+cmd = f'pip install {package_name}=={package_version} --upgrade'
+result = session.run_ps(cmd)
+
+print(result.std_out.decode())
+print(result.std_err.decode())
+PYCODE
