@@ -79,3 +79,13 @@ deploy:
       "
 script:
   - pwsh -Command "Invoke-Command -ComputerName myvm.domain.com -UseSSL -Port 443 -Credential (Get-Credential) -ScriptBlock { cd C:\app; .venv\Scripts\activate; pip install mypkg.whl }"
+deploy:
+  stage: deploy
+  script:
+    - $secpasswd = ConvertTo-SecureString "$env:WIN_PASS" -AsPlainText -Force
+    - $creds = New-Object System.Management.Automation.PSCredential ("$env:WIN_USER", $secpasswd)
+    - Invoke-Command -ComputerName myvm.domain.com -UseSSL -Port 443 -Credential $creds -ScriptBlock {
+        cd C:\app
+        .venv\Scripts\activate
+        pip install mypkg.whl
+      }
