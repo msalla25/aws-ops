@@ -1,4 +1,4 @@
-7provider "aws" {
+87provider "aws" {
   region = "us-west-2"  # Replace with your desired region
 }
 
@@ -188,3 +188,66 @@ session.run_cmd("powershell", [
 ])
 
 print("✅ Deployment completed successfully.")
+import os
+import winrm
+
+host = os.environ["WINRM_HOST"]
+user = os.environ["WINRM_USER"]
+wheel_name = os.environ["WHEEL_NAME"]   # e.g. your_package-1.0.0-py3-none-any.whl
+deploy_path = "C:\\deploy"
+venv_path = os.path.join(deploy_path, "venv")
+
+# Kerberos auth over HTTPS 5986
+session = winrm.Session(
+    f"https://{host}:5986/wsman",
+    auth=(user, None),  # password not needed if kinit ticket exists
+    transport="kerberos",
+    server_cert_validation="ignore"
+)
+
+# Powershell script: find python, create venv if needed, install wheel
+ps_script = f"""
+$ErrorActionPreference = 'Stop'
+
+# 1. Find python
+$pyPaths = @(
+    "C:\\Python311\\python.exe",
+    "C:\\Program Files\\Python311\\python.exe",
+    "C:\\Program Files (x86)\\Python311\\python.exe",
+    "$env:LOCALAPPDATA\\Programs\\Python\\Python311\\python.exe"
+)
+$python = $pyPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+if (-not $python) {{
+    Write-Error "Python not found on VM."
+    exit 1
+}}
+
+# 2. Ensure deploy folder
+if (-not (Test-Path "{deploy_path}")) {{
+    New-Item -Path "{deploy_path}" -ItemType Directory -Force | Out-Null
+}}
+
+# 3. Create venv if missing or incomplete
+$venvScripts = Join-Path "{venv_path}" "Scripts\\python.exe"
+if (-not (Test-Path $venvScripts)) {{
+    & $python -m venv "{venv_path}"
+}}
+
+# 4. Activate venv and install wheel
+$activate = Join-Path "{venv_path}" "Scripts\\Activate.ps1"
+& $activate
+pip install --upgrade pip
+pip install "{os.path.join(deploy_path, wheel_name)}"
+"""
+
+# Run the PowerShell script
+res = session.run_ps(ps_script)
+
+print("STDOUT:", res.std_out.decode())
+print("STDERR:", res.std_err.decode())
+
+if res.status_code != 0:
+    raise Exception(f"Deployment failed with exit code {res.status_code}")
+else:
+    print("✅ Deployment completed successfully.")
