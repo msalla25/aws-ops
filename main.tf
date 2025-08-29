@@ -155,3 +155,36 @@ index=<your_index> source=<your_log_source>
 
 
 (100)*(custom:apigee.request.success.count:splitBy("proxy.name","request.path"):sum / (custom:apigee.request.count:splitBy("proxy.name","request.path"):sum):names
+import os
+import winrm
+
+host = os.environ["WINRM_HOST"]
+user = os.environ["WINRM_USER"]
+wheel_path = os.environ["WHEEL_PATH"]
+
+# establish kerberos-authenticated winrm session over https/5986
+session = winrm.Session(
+    f"https://{host}:5986/wsman",
+    auth=(user, None),   # password not needed if Kerberos ticket from kinit exists
+    transport="kerberos",
+    server_cert_validation="ignore"
+)
+
+# 1. Ensure deploy folder
+session.run_cmd("powershell", ["-Command", "New-Item -Path C:\\deploy -ItemType Directory -Force"])
+
+# 2. Copy wheel file to VM (simple base64 transfer)
+with open(wheel_path, "rb") as f:
+    b64 = f.read().hex()
+session.run_cmd("powershell", ["-Command", f"[IO.File]::WriteAllBytes('C:\\deploy\\{os.path.basename(wheel_path)}', [Convert]::FromHexString('{b64}'))"])
+
+# 3. Create venv if missing
+session.run_cmd("powershell", ["-Command", "if (!(Test-Path C:\\deploy\\venv)) { python -m venv C:\\deploy\\venv }"])
+
+# 4. Install wheel into venv
+session.run_cmd("powershell", [
+    "-Command",
+    "& { C:\\deploy\\venv\\Scripts\\Activate.ps1; pip install --upgrade pip; pip install C:\\deploy\\" + os.path.basename(wheel_path) + " }"
+])
+
+print("✅ Deployment completed successfully.")
