@@ -113,3 +113,5 @@ if [ $row_count -gt 0 ]; then
         echo "..."
     fi
 fi
+
+split -l 3500 -a 2 --numeric-suffixes=1 -d your_file_name.txt new_file_name_prefix.
