@@ -1,26 +1,36 @@
-#!/bin/bash
+import csv
+import re
 
-# Check if input file is provided
-if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 <input_file>"
-    exit 1
-fi
+# Read the XML template
+with open('template.xml', 'r') as file:
+    template = file.read()
 
-input_file="$1"
-lines_per_file=10000
-output_prefix="output_payload"
+# Read CSV and generate XML payloads
+with open('input.csv', 'r') as csv_file:
+    csv_reader = csv.DictReader(csv_file)
+    with open('output.txt', 'w') as output_file:
+        for row in csv_reader:
+            xml_content = template
+            for key, value in row.items():
+                xml_content = xml_content.replace(f'${{{key}}}', value)
+            # Minify XML: remove newlines and extra spaces
+            xml_content = re.sub(r'>\s+<', '><', xml_content).strip()
+            output_file.write(xml_content + '\n')
 
-# Split the file
-split -l $lines_per_file --numeric-suffixes=1 --suffix-length=1 --additional-suffix=".txt" "$input_file" "$output_prefix_"
+stages:
+  - generate
 
-# Rename files to have consistent numbering (e.g., 01, 02, etc. if more than 9 files)
-count=1
-for file in ${output_prefix}_*.txt; do
-    new_name="${output_prefix}_${count}.txt"
-    if [ "$file" != "$new_name" ]; then
-        mv "$file" "$new_name"
-    fi
-    ((count++))
-done
-
-echo "Split $input_file into $((count-1)) files with $lines_per_file lines each."
+generate_xml:
+  stage: generate
+  image: python:3.9
+  script:
+    - pip install pandas  # If needed for complex CSV handling
+    - python generate_xml.py
+  artifacts:
+    paths:
+      - output.txt
+  only:
+    changes:
+      - input.csv
+      - template.xml
+      - generate_xml.py
