@@ -105,3 +105,4 @@ network:
         addresses:
           - 8.8.8.8
           - 1.1.1.1
+ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDPk1tz8RvLKFyDrdI/7yWVuQ7ZHA8UTEw5xqipANa6XUtl7KrZzHC7T5H42i0E9WrMhQ+ojbL13P7Vnp9Xk/Glpp/SPQulyBft4pFl8stdeBTRi1uyzng89RZwXzlt1wSOl2GIIMKDBgMR9zLbY9wKnonvAT2OjGt7izfKPrNX2V9vdmOKAimfS/S8/uc9JrYjGmze3Zfy6eNv/fjaTS5nOjUCpgj+mEickLHRwRJT7yMpr3AzYNV6R16eXh4z3xondzlvQjqDFcdCyfGSdkvbEM9xT2ldiIQz5q7MjOMg5qN6rLr06uIaOZTiDxXJ+ahZ2UAvqKPVALpdv2Zg426UyLonz4gDAZE7QpQkS4PhAKAeNkmeogeAMArt/dwyAqBrKa4Urrc2dIeGPd68Lr5NNrZ7i9B3jrzlg4K+uDbOBvLNhkBcpx8qQIBrTjbTg3l3jdyUxYzszy+5+wTpxKsXi7sM9EiabJFStcYsNZykBSWuoNHmKlbJSUd27IWHXPk= msalla@Mahidhars
