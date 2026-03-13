@@ -1,239 +1,424 @@
 """
-DataStage XML Parser
-Reads DataStage job/sequence XML files from a folder and outputs a CSV
-with selective fields based on specified criteria.
+DataStage XML Parser (Corrected)
+─────────────────────────────────
+Reads DataStage *XML-format* export files (root element: <DSExport>)
+from a folder and outputs a CSV with selective fields.
+
+DataStage XML Export Structure
+──────────────────────────────
+  <DSExport>
+    <Header .../>
+    <Job Identifier="JOB_NAME" ...>
+      <Record Identifier="ROOT" Type="JobDefn" ...>
+        <Property Name="Name">JOB_NAME</Property>
+        ...
+      </Record>
+      <Record Identifier="V0S0" Type="CustomStage" ...>
+        <Property Name="Name">STAGE_NAME</Property>
+        <Property Name="StageType">OracleConnectorPX</Property>
+        <Property Name="NextID">2</Property>
+        <Collection Name="Properties" Type="CustomProperty">
+          <SubRecord>
+            <Property Name="Name">XMLProperties</Property>
+            <Property Name="Value"><![CDATA[
+              <?xml version='1.0'...?>
+              <Properties version='1.1'>
+                <Common>...</Common>
+                <Connection>
+                  <Server ...><![CDATA[...]]></Server>
+                  <Database ...><![CDATA[ORA_IODS_SCHEMA]]></Database>
+                  ...
+                </Connection>
+                <Usage>
+                  <SQL>
+                    <SelectStatement ...><![CDATA[SELECT ...]]></SelectStatement>
+                    <TableName ...><![CDATA[...]]></TableName>
+                  </SQL>
+                  ...
+                </Usage>
+              </Properties>
+            ]]></Property>
+          </SubRecord>
+        </Collection>
+      </Record>
+      <Record Identifier="V0S0P1" Type="CustomOutput" ...>
+        <Property Name="Name">OUTPUT_LINK_NAME</Property>
+        <Property Name="Partner">V0S0</Property>  <!-- links back to stage -->
+        <Collection Name="Columns" Type="MetaColumn">
+          <SubRecord>
+            <Property Name="Name">COLUMN_NAME</Property>
+            <Property Name="SqlType">12</Property>
+            ...
+          </SubRecord>
+        </Collection>
+        <!-- Also has XMLProperties in SubRecords under Properties collection -->
+      </Record>
+      <Record Identifier="V0S0P2" Type="CustomInput" ...>
+        ...
+      </Record>
+      ...
+    </Job>
+  </DSExport>
+
+The XMLProperties value is itself an XML string (often with inner CDATA
+sections) that holds the real connector configuration: SelectStatement,
+TableName, InsertStatement, Schema, etc.
+
+This script:
+  1. Reads each .xml file ONCE
+  2. Checks whether the raw text contains BOTH required strings
+  3. Parses the XML, walks Job > Record elements
+  4. For Record Type="CustomStage" whose StageType or XMLProperties
+     contain both required strings, extracts SQL + table/view info
+  5. Also gathers output-link column metadata from associated
+     CustomOutput records
+  6. Writes all results to CSV
 """
 
 import os
 import csv
 import re
 import glob
+import html
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Optional
 
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-INPUT_FOLDER  = "./datastage_jobs"   # Folder containing DataStage XML files
+INPUT_FOLDER  = "./datastage_jobs"       # Folder with DataStage XML exports
 OUTPUT_CSV    = "./datastage_output.csv"
 
+# Files must contain BOTH of these strings to be processed at all
 REQUIRED_STRINGS = ["OracleConnectorPX", "ORA_IODS_SCHEMA"]
 
 CSV_HEADERS = [
     "Job/Sequence Name",
     "Stage Name",
+    "Stage Type",
     "SQL Query",
-    "View Name",
-    "View Column",
+    "Table/View Name",
+    "Schema",
+    "Output Columns",
 ]
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def file_meets_criteria(file_path: str) -> bool:
-    """Return True only if the file contains BOTH required strings."""
-    try:
-        content = Path(file_path).read_text(encoding="utf-8", errors="replace")
-        return all(s in content for s in REQUIRED_STRINGS)
-    except Exception as e:
-        print(f"  [WARN] Could not read {file_path}: {e}")
-        return False
+# ═════════════════════════════════════════════════════════════════════════════
+#  Utility helpers
+# ═════════════════════════════════════════════════════════════════════════════
 
-
-def extract_job_name(root: ET.Element, file_path: str) -> str:
+def get_property(record_el: ET.Element, prop_name: str) -> str:
     """
-    Extract the top-level job / sequence name from the XML.
-    Tries several common DataStage attribute patterns before
-    falling back to the filename stem.
+    Get the text of <Property Name="prop_name">TEXT</Property>
+    that is a *direct child* of record_el.
     """
-    # Pattern 1: <Job name="..."> or <Sequence name="...">
-    for tag in ("Job", "Sequence", "DSJob", "DSSequence"):
-        el = root.find(f".//{tag}")
-        if el is not None:
-            for attr in ("name", "Name", "Identifier", "identifier"):
-                val = el.get(attr)
-                if val:
-                    return val
-
-    # Pattern 2: root-level attribute
-    for attr in ("name", "Name", "Identifier", "identifier", "JobName"):
-        val = root.get(attr)
-        if val:
-            return val
-
-    # Pattern 3: <Property name="Name">value</Property>
-    for prop in root.iter("Property"):
-        if prop.get("name") in ("Name", "Identifier"):
-            text = (prop.text or "").strip()
-            if text:
-                return text
-
-    # Pattern 4: <Header><Identifier>...</Identifier></Header>
-    ident = root.find(".//Identifier")
-    if ident is not None and (ident.text or "").strip():
-        return ident.text.strip()
-
-    # Fallback: filename without extension
-    return Path(file_path).stem
-
-
-def get_element_text(el: ET.Element | None) -> str:
-    """Return stripped text content of an element, or empty string."""
-    if el is None:
-        return ""
-    return (el.text or "").strip()
-
-
-def collect_stage_text(root: ET.Element) -> dict[str, dict]:
-    """
-    Build a mapping  stage_name -> {"type": ..., "sql": ..., "props": ...}
-    by walking every element in the tree and gathering property text.
-    """
-    stages: dict[str, dict] = {}
-
-    # DataStage XML uses a variety of stage container tags
-    stage_tags = {"Stage", "DSStage", "Node", "StageType"}
-
-    for el in root.iter():
-        tag = el.tag.split("}")[-1]          # strip namespace if present
-        if tag not in stage_tags:
-            continue
-
-        # Determine stage name
-        name = None
-        for attr in ("name", "Name", "Identifier"):
-            val = el.get(attr)
-            if val:
-                name = val
-                break
-        if name is None:
-            name_el = el.find("Name") or el.find("Identifier")
-            if name_el is not None:
-                name = get_element_text(name_el)
-        if not name:
-            continue
-
-        # Determine stage type (look for StageType or XMLProperties)
-        stage_type = el.get("StageType", "") or el.get("stageType", "")
-        if not stage_type:
-            st_el = el.find(".//StageType")
-            if st_el is not None:
-                stage_type = get_element_text(st_el) or st_el.get("value", "")
-
-        # Gather all property text under this stage element
-        all_text = " ".join(
-            (prop.text or "")
-            for prop in el.iter()
-            if prop.text and prop.text.strip()
-        )
-
-        stages[name] = {
-            "type": stage_type,
-            "all_text": all_text,
-            "element": el,
-        }
-
-    return stages
-
-
-def extract_sql_from_stage(stage_el: ET.Element, all_text: str) -> str:
-    """
-    Extract the SQL query from a stage element.
-    Tries multiple property name patterns used across DataStage versions.
-    """
-    sql_property_names = {
-        "SelectStatement", "selectstatement", "sql", "SQL",
-        "XMLProperties", "UserQuery", "userquery", "Query",
-        "BeforeSQL", "AfterSQL", "TableName",
-    }
-
-    # 1. Named <Property name="SelectStatement">...</Property>
-    for prop in stage_el.iter("Property"):
-        pname = prop.get("name", "")
-        if pname in sql_property_names:
-            text = get_element_text(prop)
-            if text:
-                return text
-
-    # 2. <XMLProperties> block that contains SQL-like content
-    for xp in stage_el.iter("XMLProperties"):
-        text = get_element_text(xp)
-        if re.search(r"\bSELECT\b", text, re.IGNORECASE):
-            return text
-
-    # 3. Scan all_text for a SELECT … FROM block
-    sql_match = re.search(
-        r"(SELECT\s+.+?(?:FROM\s+\S+).*?)(?=SELECT\s|\Z)",
-        all_text,
-        re.IGNORECASE | re.DOTALL,
-    )
-    if sql_match:
-        return sql_match.group(1).strip()
-
+    for prop in record_el:
+        tag = prop.tag.split("}")[-1] if "}" in prop.tag else prop.tag
+        if tag == "Property" and prop.get("Name") == prop_name:
+            return (prop.text or "").strip()
     return ""
 
 
+def get_subrecord_value(record_el: ET.Element, sr_prop_name: str) -> str:
+    """
+    In a DataStage Record, properties can also live inside:
+      <Collection Name="Properties" Type="CustomProperty">
+        <SubRecord>
+          <Property Name="Name">XMLProperties</Property>
+          <Property Name="Value">...big string...</Property>
+        </SubRecord>
+      </Collection>
+
+    This function searches all SubRecords for one whose "Name" property
+    matches sr_prop_name, then returns the corresponding "Value" property.
+    """
+    for collection in record_el.iter():
+        coll_tag = collection.tag.split("}")[-1] if "}" in collection.tag else collection.tag
+        if coll_tag != "Collection":
+            continue
+        for sub in collection:
+            sub_tag = sub.tag.split("}")[-1] if "}" in sub.tag else sub.tag
+            if sub_tag != "SubRecord":
+                continue
+            name_val = ""
+            value_val = ""
+            for prop in sub:
+                ptag = prop.tag.split("}")[-1] if "}" in prop.tag else prop.tag
+                if ptag != "Property":
+                    continue
+                pname = prop.get("Name", "")
+                ptext = (prop.text or "").strip()
+                if pname == "Name":
+                    name_val = ptext
+                elif pname == "Value":
+                    value_val = ptext
+            if name_val == sr_prop_name:
+                return value_val
+    return ""
+
+
+def get_all_subrecord_values(record_el: ET.Element, sr_prop_name: str) -> list[str]:
+    """
+    Like get_subrecord_value but returns ALL matching SubRecords' Value fields.
+    Useful when multiple SubRecords share the same Name (e.g. columns).
+    """
+    results = []
+    for collection in record_el.iter():
+        coll_tag = collection.tag.split("}")[-1] if "}" in collection.tag else collection.tag
+        if coll_tag != "Collection":
+            continue
+        for sub in collection:
+            sub_tag = sub.tag.split("}")[-1] if "}" in sub.tag else sub.tag
+            if sub_tag != "SubRecord":
+                continue
+            name_val = ""
+            value_val = ""
+            for prop in sub:
+                ptag = prop.tag.split("}")[-1] if "}" in prop.tag else prop.tag
+                if ptag != "Property":
+                    continue
+                pname = prop.get("Name", "")
+                ptext = (prop.text or "").strip()
+                if pname == "Name":
+                    name_val = ptext
+                elif pname == "Value":
+                    value_val = ptext
+            if name_val == sr_prop_name:
+                results.append(value_val)
+    return results
+
+
+def collect_column_names_from_record(record_el: ET.Element) -> list[str]:
+    """
+    Extract column names from a CustomOutput / CustomInput Record.
+    Columns live inside:
+      <Collection Name="Columns" Type="MetaColumn">
+        <SubRecord>
+          <Property Name="Name">COL_NAME</Property>
+          ...
+        </SubRecord>
+      </Collection>
+    """
+    columns = []
+    for collection in record_el.iter():
+        coll_tag = collection.tag.split("}")[-1] if "}" in collection.tag else collection.tag
+        if coll_tag != "Collection":
+            continue
+        if collection.get("Name") != "Columns":
+            continue
+        for sub in collection:
+            sub_tag = sub.tag.split("}")[-1] if "}" in sub.tag else sub.tag
+            if sub_tag != "SubRecord":
+                continue
+            for prop in sub:
+                ptag = prop.tag.split("}")[-1] if "}" in prop.tag else prop.tag
+                if ptag == "Property" and prop.get("Name") == "Name":
+                    col_name = (prop.text or "").strip()
+                    if col_name:
+                        columns.append(col_name)
+    return columns
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Parsing the inner XMLProperties string
+# ═════════════════════════════════════════════════════════════════════════════
+
+def parse_xml_properties(xml_props_str: str) -> dict:
+    """
+    The XMLProperties value is itself an XML string (sometimes with HTML
+    entities or nested CDATA).  We parse out key connector configuration:
+      - SelectStatement / TableName / InsertStatement  (the SQL)
+      - Schema / Database  (the schema reference)
+      - Context  (1 = source / output, 2 = target / input)
+
+    Returns a dict with keys: sql, table_name, schema, context, raw
+    """
+    result = {
+        "sql": "",
+        "table_name": "",
+        "schema": "",
+        "context": "",
+        "raw": xml_props_str,
+    }
+
+    if not xml_props_str:
+        return result
+
+    # The embedded XML often starts with <?xml ...?> — strip it for safety
+    text = xml_props_str.strip()
+    # Unescape any HTML entities (the outer XML parser may have decoded these,
+    # but sometimes they arrive double-encoded)
+    text = html.unescape(text)
+    text = html.unescape(text)  # second pass for double-encoding
+
+    # ── Strategy 1: try to parse as XML ──────────────────────────────────────
+    try:
+        # Wrap in a root if needed (sometimes the string is just the inner XML)
+        if not text.startswith("<?xml") and not text.startswith("<Properties"):
+            text_wrapped = f"<root>{text}</root>"
+        else:
+            # Strip XML declaration if present
+            text_wrapped = re.sub(r"<\?xml[^?]*\?>", "", text).strip()
+            if not text_wrapped.startswith("<"):
+                text_wrapped = f"<root>{text_wrapped}</root>"
+
+        inner_root = ET.fromstring(text_wrapped)
+
+        # Walk all elements looking for known property names
+        for el in inner_root.iter():
+            tag = el.tag.split("}")[-1] if "}" in el.tag else el.tag
+            el_text = (el.text or "").strip()
+
+            # Strip CDATA markers if leftover
+            if el_text.startswith("<![CDATA["):
+                el_text = el_text[9:]
+            if el_text.endswith("]]>"):
+                el_text = el_text[:-3]
+            el_text = el_text.strip()
+
+            tag_lower = tag.lower()
+
+            if tag_lower in ("selectstatement", "userquery", "query"):
+                if el_text and not result["sql"]:
+                    result["sql"] = el_text
+            elif tag_lower == "tablename":
+                if el_text and not result["table_name"]:
+                    result["table_name"] = el_text
+            elif tag_lower == "insertstatement":
+                if el_text and not result["sql"]:
+                    result["sql"] = el_text
+            elif tag_lower in ("schema", "schemaname"):
+                if el_text and not result["schema"]:
+                    result["schema"] = el_text
+            elif tag_lower == "database":
+                if el_text and not result["schema"]:
+                    result["schema"] = el_text
+            elif tag_lower == "context":
+                if el_text and not result["context"]:
+                    result["context"] = el_text
+
+        if result["sql"] or result["table_name"]:
+            return result
+
+    except ET.ParseError:
+        pass  # Fall through to regex strategy
+
+    # ── Strategy 2: regex fallback for malformed inner XML ───────────────────
+    # SelectStatement
+    for pattern in [
+        r"<SelectStatement[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</SelectStatement>",
+        r"<UserQuery[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</UserQuery>",
+        r"<Query[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</Query>",
+    ]:
+        m = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+        if m and m.group(1).strip():
+            result["sql"] = m.group(1).strip()
+            break
+
+    # TableName
+    m = re.search(
+        r"<TableName[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</TableName>",
+        text, re.IGNORECASE | re.DOTALL,
+    )
+    if m:
+        result["table_name"] = m.group(1).strip()
+
+    # InsertStatement (target stages)
+    if not result["sql"]:
+        m = re.search(
+            r"<InsertStatement[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</InsertStatement>",
+            text, re.IGNORECASE | re.DOTALL,
+        )
+        if m:
+            result["sql"] = m.group(1).strip()
+
+    # Schema / Database
+    for pattern in [
+        r"<Schema[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</Schema>",
+        r"<SchemaName[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</SchemaName>",
+        r"<Database[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</Database>",
+    ]:
+        m = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+        if m and m.group(1).strip():
+            result["schema"] = m.group(1).strip()
+            break
+
+    # Context
+    m = re.search(
+        r"<Context[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</Context>",
+        text, re.IGNORECASE | re.DOTALL,
+    )
+    if m:
+        result["context"] = m.group(1).strip()
+
+    return result
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Extract SQL from raw text as a last resort
+# ═════════════════════════════════════════════════════════════════════════════
+
+def extract_sql_from_raw_text(text: str) -> str:
+    """Attempt to pull a SELECT ... FROM ... block from unstructured text."""
+    m = re.search(
+        r"(SELECT\s+.+?\s+FROM\s+\S+.*?)(?=SELECT\s|\Z)",
+        text, re.IGNORECASE | re.DOTALL,
+    )
+    return m.group(1).strip() if m else ""
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Extract view/table + column references from SQL
+# ═════════════════════════════════════════════════════════════════════════════
+
 def extract_views_from_sql(sql: str) -> list[tuple[str, str]]:
     """
-    Parse all VIEW_NAME.COLUMN_NAME (or schema.view.column) references
-    from a SQL string.  Returns a list of (view_name, column_name) tuples.
-
-    Strategy:
-      1. FROM / JOIN clauses  → capture view / table names
-      2. SELECT column list   → capture column names (simple & alias forms)
+    Parse FROM/JOIN table names and SELECT column names from a SQL string.
+    Returns list of (table_or_view_name, column_name) tuples.
     """
     if not sql:
         return []
 
     results: list[tuple[str, str]] = []
 
-    # ── Step 1: collect FROM / JOIN sources ──────────────────────────────────
-    # Matches:  schema.view_name  or  view_name  (with optional alias)
+    # Collect FROM / JOIN sources: schema.table or just table, with optional alias
     from_pattern = re.compile(
         r"(?:FROM|JOIN)\s+"
-        r"((?:[A-Za-z_][\w$#]*\.){0,2}[A-Za-z_][\w$#]*)"   # object name
-        r"(?:\s+(?:AS\s+)?([A-Za-z_][\w$#]*))?",            # optional alias
+        r"((?:[A-Za-z_][\w$#]*\.){0,2}[A-Za-z_][\w$#]*)"
+        r"(?:\s+(?:AS\s+)?([A-Za-z_][\w$#]*))?",
         re.IGNORECASE,
     )
-    sources: list[tuple[str, str | None]] = []   # (full_name, alias)
+    sources: list[tuple[str, Optional[str]]] = []
     for m in from_pattern.finditer(sql):
-        full_name = m.group(1)
-        alias     = m.group(2)
-        sources.append((full_name, alias))
+        sources.append((m.group(1), m.group(2)))
 
-    # ── Step 2: collect SELECT columns ───────────────────────────────────────
-    # Attempt to isolate SELECT … FROM block
+    # Collect SELECT columns
     select_match = re.search(
-        r"SELECT\s+(.+?)\s+FROM\b",
-        sql,
-        re.IGNORECASE | re.DOTALL,
+        r"SELECT\s+(.*?)\s+FROM\b",
+        sql, re.IGNORECASE | re.DOTALL,
     )
     columns: list[str] = []
     if select_match:
         col_block = select_match.group(1)
-        # Split on commas that are not inside parentheses
         depth = 0
         current: list[str] = []
         for ch in col_block:
             if ch == "(":
                 depth += 1
-                current.append(ch)
             elif ch == ")":
                 depth -= 1
-                current.append(ch)
             elif ch == "," and depth == 0:
                 columns.append("".join(current).strip())
                 current = []
-            else:
-                current.append(ch)
+                continue
+            current.append(ch)
         if current:
             columns.append("".join(current).strip())
 
-    # ── Step 3: pair sources with columns ────────────────────────────────────
     if sources and columns:
         for col_expr in columns:
-            # Strip alias:  expr AS alias
             col_expr = re.sub(r"\s+AS\s+\S+$", "", col_expr, flags=re.IGNORECASE).strip()
-
-            # Qualified:  alias.column  or  schema.view.column
             qual_match = re.match(
                 r"((?:[A-Za-z_][\w$#]*\.)+)([A-Za-z_][\w$#*]*)",
                 col_expr,
@@ -241,8 +426,6 @@ def extract_views_from_sql(sql: str) -> list[tuple[str, str]]:
             if qual_match:
                 qualifier = qual_match.group(1).rstrip(".")
                 col_name  = qual_match.group(2)
-
-                # Try to match qualifier to a known alias or source name
                 matched_view = None
                 for full_name, alias in sources:
                     if alias and alias.upper() == qualifier.upper():
@@ -251,122 +434,306 @@ def extract_views_from_sql(sql: str) -> list[tuple[str, str]]:
                     if full_name.upper() == qualifier.upper():
                         matched_view = full_name
                         break
-                    # Last segment of full_name matches qualifier
                     if full_name.split(".")[-1].upper() == qualifier.upper():
                         matched_view = full_name
                         break
-
-                if matched_view:
-                    results.append((matched_view, col_name))
-                else:
-                    # qualifier itself is the view reference
-                    results.append((qualifier, col_name))
+                results.append((matched_view or qualifier, col_name))
             else:
-                # Unqualified column – associate with first source
                 col_clean = col_expr.strip().strip("\"'`[]")
                 if col_clean and col_clean != "*":
                     view = sources[0][0] if sources else ""
                     results.append((view, col_clean))
-
     elif sources:
-        # No columns parsed – record sources with empty column
         for full_name, _ in sources:
             results.append((full_name, ""))
 
-    # De-duplicate while preserving order
+    # De-duplicate preserving order
     seen: set[tuple[str, str]] = set()
     unique: list[tuple[str, str]] = []
     for item in results:
         if item not in seen:
             seen.add(item)
             unique.append(item)
-
     return unique
 
 
-def process_file(file_path: str) -> list[dict]:
+# ═════════════════════════════════════════════════════════════════════════════
+#  File-level filtering (single read)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def read_file_if_meets_criteria(file_path: str) -> Optional[str]:
     """
-    Parse a single DataStage XML file and return a list of row dicts
-    (one per qualifying stage × view-column combination).
+    Read the file ONCE.  Return its content string if it contains
+    both required strings; otherwise return None.
+    """
+    try:
+        content = Path(file_path).read_text(encoding="utf-8", errors="replace")
+        if all(s in content for s in REQUIRED_STRINGS):
+            return content
+        return None
+    except Exception as e:
+        print(f"  [WARN] Could not read {file_path}: {e}")
+        return None
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Process a single DataStage XML export file
+# ═════════════════════════════════════════════════════════════════════════════
+
+def process_file(file_path: str, raw_content: str) -> list[dict]:
+    """
+    Parse a DataStage XML export and extract rows for qualifying stages.
+
+    Expected top-level structure:
+      <DSExport>
+        <Header .../>
+        <Job Identifier="..." ...>
+          <Record Type="JobDefn" ...> ... </Record>
+          <Record Type="CustomStage" ...> ... </Record>
+          <Record Type="CustomOutput" ...> ... </Record>
+          ...
+        </Job>
+        <Job ...> ... </Job>   <!-- if multiple jobs exported -->
+      </DSExport>
     """
     rows: list[dict] = []
 
     try:
-        tree = ET.parse(file_path)
-        root = tree.getroot()
+        root = ET.fromstring(raw_content)
     except ET.ParseError as e:
         print(f"  [ERROR] XML parse failed for {file_path}: {e}")
         return rows
 
-    job_name = extract_job_name(root, file_path)
-    stages   = collect_stage_text(root)
+    # Determine root tag (strip namespace)
+    root_tag = root.tag.split("}")[-1] if "}" in root.tag else root.tag
 
-    for stage_name, info in stages.items():
-        stage_type = info["type"]
-        all_text   = info["all_text"]
-        stage_el   = info["element"]
+    # ── Locate Job elements ──────────────────────────────────────────────────
+    # Standard: <DSExport><Job ...>...</Job></DSExport>
+    # But sometimes the file might be a single <Job> at root level
+    jobs: list[ET.Element] = []
+    if root_tag == "DSExport":
+        for child in root:
+            ctag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+            if ctag == "Job":
+                jobs.append(child)
+    elif root_tag == "Job":
+        jobs.append(root)
+    else:
+        # Try finding Job elements anywhere
+        for el in root.iter():
+            etag = el.tag.split("}")[-1] if "}" in el.tag else el.tag
+            if etag == "Job":
+                jobs.append(el)
 
-        # Must contain both required strings in stage text or type
-        combined = f"{stage_type} {all_text}"
-        if not all(s in combined for s in REQUIRED_STRINGS):
-            continue
+    if not jobs:
+        print(f"  [WARN] No <Job> elements found in {Path(file_path).name}")
+        return rows
 
-        sql      = extract_sql_from_stage(stage_el, all_text)
-        vc_pairs = extract_views_from_sql(sql)
+    for job_el in jobs:
+        # ── Extract job name ─────────────────────────────────────────────────
+        job_name = job_el.get("Identifier", "")
+        if not job_name:
+            # Fallback: look in the JobDefn Record for Property Name="Name"
+            for rec in job_el:
+                rtag = rec.tag.split("}")[-1] if "}" in rec.tag else rec.tag
+                if rtag == "Record" and rec.get("Type") == "JobDefn":
+                    job_name = get_property(rec, "Name")
+                    break
+        if not job_name:
+            job_name = Path(file_path).stem
 
-        if vc_pairs:
-            for view_name, view_col in vc_pairs:
+        # ── Build lookup of Record elements by Identifier ────────────────────
+        records_by_id:   dict[str, ET.Element] = {}
+        records_by_type: dict[str, list[ET.Element]] = {}
+
+        for rec in job_el:
+            rtag = rec.tag.split("}")[-1] if "}" in rec.tag else rec.tag
+            if rtag != "Record":
+                continue
+            rec_id   = rec.get("Identifier", "")
+            rec_type = rec.get("Type", "")
+            if rec_id:
+                records_by_id[rec_id] = rec
+            records_by_type.setdefault(rec_type, []).append(rec)
+
+        # ── Gather output columns per stage Identifier ───────────────────────
+        # CustomOutput records reference their parent stage via the "Partner"
+        # property (value = stage's Record Identifier)
+        stage_output_columns: dict[str, list[str]] = {}  # stage_id -> [col names]
+
+        for rec in records_by_type.get("CustomOutput", []):
+            partner_id = get_property(rec, "Partner")
+            if not partner_id:
+                # Try the Identifier prefix: e.g., "V0S2P1" belongs to "V0S2"
+                rec_id = rec.get("Identifier", "")
+                # Strip trailing P<digit(s)> to get the parent stage identifier
+                m = re.match(r"^(.+?)P\d+$", rec_id)
+                if m:
+                    partner_id = m.group(1)
+
+            if partner_id:
+                cols = collect_column_names_from_record(rec)
+                existing = stage_output_columns.get(partner_id, [])
+                existing.extend(cols)
+                stage_output_columns[partner_id] = existing
+
+        # Also check CustomInput for target stages
+        for rec in records_by_type.get("CustomInput", []):
+            partner_id = get_property(rec, "Partner")
+            if not partner_id:
+                rec_id = rec.get("Identifier", "")
+                m = re.match(r"^(.+?)P\d+$", rec_id)
+                if m:
+                    partner_id = m.group(1)
+            if partner_id:
+                cols = collect_column_names_from_record(rec)
+                existing = stage_output_columns.get(partner_id, [])
+                existing.extend(cols)
+                stage_output_columns[partner_id] = existing
+
+        # ── Process CustomStage records ──────────────────────────────────────
+        for stage_rec in records_by_type.get("CustomStage", []):
+            stage_id   = stage_rec.get("Identifier", "")
+            stage_name = get_property(stage_rec, "Name") or stage_id
+            stage_type = get_property(stage_rec, "StageType")
+
+            # ── Get XMLProperties (the main config blob) ─────────────────────
+            # XMLProperties can be:
+            #   a) A direct <Property Name="XMLProperties"> child
+            #   b) Inside a SubRecord with Name="XMLProperties" and Value="..."
+            xml_props_str = get_property(stage_rec, "XMLProperties")
+            if not xml_props_str:
+                xml_props_str = get_subrecord_value(stage_rec, "XMLProperties")
+
+            # Also check output/input link SubRecords for XMLProperties
+            # (some connectors store SQL in the link-level XMLProperties)
+            link_xml_props: list[str] = []
+            for link_type in ("CustomOutput", "CustomInput"):
+                for link_rec in records_by_type.get(link_type, []):
+                    partner = get_property(link_rec, "Partner")
+                    if not partner:
+                        lid = link_rec.get("Identifier", "")
+                        m = re.match(r"^(.+?)P\d+$", lid)
+                        if m:
+                            partner = m.group(1)
+                    if partner == stage_id:
+                        lxp = get_property(link_rec, "XMLProperties")
+                        if not lxp:
+                            lxp = get_subrecord_value(link_rec, "XMLProperties")
+                        if lxp:
+                            link_xml_props.append(lxp)
+
+            # ── Filter: stage must relate to both required strings ────────────
+            combined_text = f"{stage_type} {xml_props_str} {' '.join(link_xml_props)}"
+            if not all(s in combined_text for s in REQUIRED_STRINGS):
+                continue
+
+            # ── Parse the XMLProperties inner XML ────────────────────────────
+            parsed = parse_xml_properties(xml_props_str)
+
+            # If stage-level didn't yield SQL, try link-level XMLProperties
+            if not parsed["sql"]:
+                for lxp in link_xml_props:
+                    lp = parse_xml_properties(lxp)
+                    if lp["sql"]:
+                        parsed["sql"] = lp["sql"]
+                        if not parsed["table_name"] and lp["table_name"]:
+                            parsed["table_name"] = lp["table_name"]
+                        if not parsed["schema"] and lp["schema"]:
+                            parsed["schema"] = lp["schema"]
+                        break
+
+            # Last resort: regex on the raw XMLProperties string
+            if not parsed["sql"] and not parsed["table_name"]:
+                parsed["sql"] = extract_sql_from_raw_text(
+                    xml_props_str + " " + " ".join(link_xml_props)
+                )
+
+            # ── Gather output column list ────────────────────────────────────
+            out_cols = stage_output_columns.get(stage_id, [])
+            out_cols_str = ", ".join(out_cols) if out_cols else ""
+
+            # ── Determine table/view name ────────────────────────────────────
+            table_name = parsed["table_name"]
+
+            # If SQL is present, extract FROM/JOIN table references
+            sql_views = extract_views_from_sql(parsed["sql"])
+
+            if sql_views:
+                # Group columns by table/view name → one row per unique table
+                from collections import OrderedDict
+                table_cols: OrderedDict[str, list[str]] = OrderedDict()
+                for view_name, view_col in sql_views:
+                    table_cols.setdefault(view_name, [])
+                    if view_col and view_col not in table_cols[view_name]:
+                        table_cols[view_name].append(view_col)
+
+                for view_name, cols in table_cols.items():
+                    sql_cols_str = ", ".join(cols) if cols else ""
+                    rows.append({
+                        "Job/Sequence Name": job_name,
+                        "Stage Name":        stage_name,
+                        "Stage Type":        stage_type,
+                        "SQL Query":         parsed["sql"],
+                        "Table/View Name":   view_name,
+                        "Schema":            parsed["schema"],
+                        "Output Columns":    out_cols_str or sql_cols_str,
+                    })
+            else:
+                # No SQL-derived views — use the TableName from properties
                 rows.append({
                     "Job/Sequence Name": job_name,
                     "Stage Name":        stage_name,
-                    "SQL Query":         sql,
-                    "View Name":         view_name,
-                    "View Column":       view_col,
+                    "Stage Type":        stage_type,
+                    "SQL Query":         parsed["sql"],
+                    "Table/View Name":   table_name,
+                    "Schema":            parsed["schema"],
+                    "Output Columns":    out_cols_str,
                 })
-        else:
-            rows.append({
-                "Job/Sequence Name": job_name,
-                "Stage Name":        stage_name,
-                "SQL Query":         sql,
-                "View Name":         "",
-                "View Column":       "",
-            })
 
     return rows
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+#  Main
+# ═════════════════════════════════════════════════════════════════════════════
+
 def main():
-    # Resolve input folder
     input_folder = Path(INPUT_FOLDER).resolve()
     if not input_folder.exists():
         print(f"[ERROR] Input folder not found: {input_folder}")
         print("        Update INPUT_FOLDER at the top of this script.")
         return
 
-    xml_files = sorted(
+    # Collect XML files (non-recursive + recursive, deduplicated)
+    xml_files = sorted(set(
         glob.glob(str(input_folder / "*.xml")) +
         glob.glob(str(input_folder / "**" / "*.xml"), recursive=True)
-    )
+    ))
 
     if not xml_files:
         print(f"[WARN] No XML files found in: {input_folder}")
         return
 
-    print(f"Found {len(xml_files)} XML file(s). Applying base criteria …\n")
+    print(f"Found {len(xml_files)} XML file(s). Checking for required strings …\n")
 
-    all_rows:      list[dict] = []
-    skipped_count: int        = 0
-    processed_count: int      = 0
+    all_rows:        list[dict] = []
+    skipped_count:   int = 0
+    processed_count: int = 0
 
     for fp in xml_files:
         fname = Path(fp).name
-        if not file_meets_criteria(fp):
-            print(f"  [SKIP] {fname}  ← does not contain both required strings")
+
+        # Single read: check criteria AND keep content for parsing
+        content = read_file_if_meets_criteria(fp)
+
+        if content is None:
+            print(f"  [SKIP] {fname}  ← missing required strings")
             skipped_count += 1
             continue
 
         print(f"  [OK]   {fname}")
-        file_rows = process_file(fp)
+        file_rows = process_file(fp, content)
         all_rows.extend(file_rows)
         processed_count += 1
 
