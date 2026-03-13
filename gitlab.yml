@@ -1,73 +1,387 @@
-stages:
-  - report
+"""
+DataStage XML Parser
+Reads DataStage job/sequence XML files from a folder and outputs a CSV
+with selective fields based on specified criteria.
+"""
 
-generate-jboss-report:
-  stage: report
-  image: python:3.9-slim
-  before_script:
-    - apt update && apt install -y --no-install-recommends python3-pip python3-lxml
-    - pip install --no-cache-dir pandas openpyxl
-  script:
-    - |
-      cat << 'EOF' > parse_jboss_config.py
-      import pandas as pd
-      from lxml import etree
-      import sys
-
-      def parse_standalone_xml(xml_file):
-          # Parse the XML file
-          try:
-              tree = etree.parse(xml_file)
-              root = tree.getroot()
-          except Exception as e:
-              print(f"Error parsing XML file: {e}")
-              sys.exit(1)
-
-          # Initialize data structures
-          data = {
-              'Datasources': [],
-              'Artemis_AMQ': [],
-              'SystemProperties': [],
-              'SocketBindings': [],
-              'JMS_Queues': [],
-              'JMS_Topics': []
-          }
-
-          # Namespace handling - adjust these based on your JBoss/WildFly version
-          ns = {
-              'ds': 'urn:jboss:domain:datasources:4.0',
-              'messaging': 'urn:jboss:domain:messaging-activemq:12.0',
-              'server': 'urn:jboss:domain:4.2'
-          }
-
-          # Extract Datasources
-          for ds in root.xpath('//ds:datasource', namespaces=ns):
-              try:
-                  ds_data = {
-                      'Name': ds.get('jndi-name'),
-                      'JNDI': ds.get('jndi-name'),
-                      'Enabled': ds.get('enabled'),
-                      'ConnectionURL': ds.xpath('.//ds:connection-url/text()', namespaces=ns)[0] if ds.xpath('.//ds:connection-url/text()', name
+import os
+import csv
+import re
+import glob
+import xml.etree.ElementTree as ET
+from pathlib import Path
 
 
-stages:
-  - report
+# ── Configuration ─────────────────────────────────────────────────────────────
+INPUT_FOLDER  = "./datastage_jobs"   # Folder containing DataStage XML files
+OUTPUT_CSV    = "./datastage_output.csv"
 
-generate-jboss-report:
-  stage: report
-  image: python:3.9-slim
-  before_script:
-    - apt-get update && apt-get install -y --no-install-recommends python3-dev libxml2-dev libxslt1-dev gcc
-    - pip install --no-cache-dir lxml pandas openpyxl
-  script:
-    - |
-      cat << 'EOF' > parse_jboss_config.py
-      # [Previous Python script content remains exactly the same]
-      EOF
-    - python parse_jboss_config.py standalone.xml jboss_config_report.xlsx
-  artifacts:
-    paths:
-      - jboss_config_report.xlsx
-    expire_in: 1 week
-  only:
-    - main
+REQUIRED_STRINGS = ["OracleConnectorPX", "ORA_IODS_SCHEMA"]
+
+CSV_HEADERS = [
+    "Job/Sequence Name",
+    "Stage Name",
+    "SQL Query",
+    "View Name",
+    "View Column",
+]
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def file_meets_criteria(file_path: str) -> bool:
+    """Return True only if the file contains BOTH required strings."""
+    try:
+        content = Path(file_path).read_text(encoding="utf-8", errors="replace")
+        return all(s in content for s in REQUIRED_STRINGS)
+    except Exception as e:
+        print(f"  [WARN] Could not read {file_path}: {e}")
+        return False
+
+
+def extract_job_name(root: ET.Element, file_path: str) -> str:
+    """
+    Extract the top-level job / sequence name from the XML.
+    Tries several common DataStage attribute patterns before
+    falling back to the filename stem.
+    """
+    # Pattern 1: <Job name="..."> or <Sequence name="...">
+    for tag in ("Job", "Sequence", "DSJob", "DSSequence"):
+        el = root.find(f".//{tag}")
+        if el is not None:
+            for attr in ("name", "Name", "Identifier", "identifier"):
+                val = el.get(attr)
+                if val:
+                    return val
+
+    # Pattern 2: root-level attribute
+    for attr in ("name", "Name", "Identifier", "identifier", "JobName"):
+        val = root.get(attr)
+        if val:
+            return val
+
+    # Pattern 3: <Property name="Name">value</Property>
+    for prop in root.iter("Property"):
+        if prop.get("name") in ("Name", "Identifier"):
+            text = (prop.text or "").strip()
+            if text:
+                return text
+
+    # Pattern 4: <Header><Identifier>...</Identifier></Header>
+    ident = root.find(".//Identifier")
+    if ident is not None and (ident.text or "").strip():
+        return ident.text.strip()
+
+    # Fallback: filename without extension
+    return Path(file_path).stem
+
+
+def get_element_text(el: ET.Element | None) -> str:
+    """Return stripped text content of an element, or empty string."""
+    if el is None:
+        return ""
+    return (el.text or "").strip()
+
+
+def collect_stage_text(root: ET.Element) -> dict[str, dict]:
+    """
+    Build a mapping  stage_name -> {"type": ..., "sql": ..., "props": ...}
+    by walking every element in the tree and gathering property text.
+    """
+    stages: dict[str, dict] = {}
+
+    # DataStage XML uses a variety of stage container tags
+    stage_tags = {"Stage", "DSStage", "Node", "StageType"}
+
+    for el in root.iter():
+        tag = el.tag.split("}")[-1]          # strip namespace if present
+        if tag not in stage_tags:
+            continue
+
+        # Determine stage name
+        name = None
+        for attr in ("name", "Name", "Identifier"):
+            val = el.get(attr)
+            if val:
+                name = val
+                break
+        if name is None:
+            name_el = el.find("Name") or el.find("Identifier")
+            if name_el is not None:
+                name = get_element_text(name_el)
+        if not name:
+            continue
+
+        # Determine stage type (look for StageType or XMLProperties)
+        stage_type = el.get("StageType", "") or el.get("stageType", "")
+        if not stage_type:
+            st_el = el.find(".//StageType")
+            if st_el is not None:
+                stage_type = get_element_text(st_el) or st_el.get("value", "")
+
+        # Gather all property text under this stage element
+        all_text = " ".join(
+            (prop.text or "")
+            for prop in el.iter()
+            if prop.text and prop.text.strip()
+        )
+
+        stages[name] = {
+            "type": stage_type,
+            "all_text": all_text,
+            "element": el,
+        }
+
+    return stages
+
+
+def extract_sql_from_stage(stage_el: ET.Element, all_text: str) -> str:
+    """
+    Extract the SQL query from a stage element.
+    Tries multiple property name patterns used across DataStage versions.
+    """
+    sql_property_names = {
+        "SelectStatement", "selectstatement", "sql", "SQL",
+        "XMLProperties", "UserQuery", "userquery", "Query",
+        "BeforeSQL", "AfterSQL", "TableName",
+    }
+
+    # 1. Named <Property name="SelectStatement">...</Property>
+    for prop in stage_el.iter("Property"):
+        pname = prop.get("name", "")
+        if pname in sql_property_names:
+            text = get_element_text(prop)
+            if text:
+                return text
+
+    # 2. <XMLProperties> block that contains SQL-like content
+    for xp in stage_el.iter("XMLProperties"):
+        text = get_element_text(xp)
+        if re.search(r"\bSELECT\b", text, re.IGNORECASE):
+            return text
+
+    # 3. Scan all_text for a SELECT … FROM block
+    sql_match = re.search(
+        r"(SELECT\s+.+?(?:FROM\s+\S+).*?)(?=SELECT\s|\Z)",
+        all_text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if sql_match:
+        return sql_match.group(1).strip()
+
+    return ""
+
+
+def extract_views_from_sql(sql: str) -> list[tuple[str, str]]:
+    """
+    Parse all VIEW_NAME.COLUMN_NAME (or schema.view.column) references
+    from a SQL string.  Returns a list of (view_name, column_name) tuples.
+
+    Strategy:
+      1. FROM / JOIN clauses  → capture view / table names
+      2. SELECT column list   → capture column names (simple & alias forms)
+    """
+    if not sql:
+        return []
+
+    results: list[tuple[str, str]] = []
+
+    # ── Step 1: collect FROM / JOIN sources ──────────────────────────────────
+    # Matches:  schema.view_name  or  view_name  (with optional alias)
+    from_pattern = re.compile(
+        r"(?:FROM|JOIN)\s+"
+        r"((?:[A-Za-z_][\w$#]*\.){0,2}[A-Za-z_][\w$#]*)"   # object name
+        r"(?:\s+(?:AS\s+)?([A-Za-z_][\w$#]*))?",            # optional alias
+        re.IGNORECASE,
+    )
+    sources: list[tuple[str, str | None]] = []   # (full_name, alias)
+    for m in from_pattern.finditer(sql):
+        full_name = m.group(1)
+        alias     = m.group(2)
+        sources.append((full_name, alias))
+
+    # ── Step 2: collect SELECT columns ───────────────────────────────────────
+    # Attempt to isolate SELECT … FROM block
+    select_match = re.search(
+        r"SELECT\s+(.+?)\s+FROM\b",
+        sql,
+        re.IGNORECASE | re.DOTALL,
+    )
+    columns: list[str] = []
+    if select_match:
+        col_block = select_match.group(1)
+        # Split on commas that are not inside parentheses
+        depth = 0
+        current: list[str] = []
+        for ch in col_block:
+            if ch == "(":
+                depth += 1
+                current.append(ch)
+            elif ch == ")":
+                depth -= 1
+                current.append(ch)
+            elif ch == "," and depth == 0:
+                columns.append("".join(current).strip())
+                current = []
+            else:
+                current.append(ch)
+        if current:
+            columns.append("".join(current).strip())
+
+    # ── Step 3: pair sources with columns ────────────────────────────────────
+    if sources and columns:
+        for col_expr in columns:
+            # Strip alias:  expr AS alias
+            col_expr = re.sub(r"\s+AS\s+\S+$", "", col_expr, flags=re.IGNORECASE).strip()
+
+            # Qualified:  alias.column  or  schema.view.column
+            qual_match = re.match(
+                r"((?:[A-Za-z_][\w$#]*\.)+)([A-Za-z_][\w$#*]*)",
+                col_expr,
+            )
+            if qual_match:
+                qualifier = qual_match.group(1).rstrip(".")
+                col_name  = qual_match.group(2)
+
+                # Try to match qualifier to a known alias or source name
+                matched_view = None
+                for full_name, alias in sources:
+                    if alias and alias.upper() == qualifier.upper():
+                        matched_view = full_name
+                        break
+                    if full_name.upper() == qualifier.upper():
+                        matched_view = full_name
+                        break
+                    # Last segment of full_name matches qualifier
+                    if full_name.split(".")[-1].upper() == qualifier.upper():
+                        matched_view = full_name
+                        break
+
+                if matched_view:
+                    results.append((matched_view, col_name))
+                else:
+                    # qualifier itself is the view reference
+                    results.append((qualifier, col_name))
+            else:
+                # Unqualified column – associate with first source
+                col_clean = col_expr.strip().strip("\"'`[]")
+                if col_clean and col_clean != "*":
+                    view = sources[0][0] if sources else ""
+                    results.append((view, col_clean))
+
+    elif sources:
+        # No columns parsed – record sources with empty column
+        for full_name, _ in sources:
+            results.append((full_name, ""))
+
+    # De-duplicate while preserving order
+    seen: set[tuple[str, str]] = set()
+    unique: list[tuple[str, str]] = []
+    for item in results:
+        if item not in seen:
+            seen.add(item)
+            unique.append(item)
+
+    return unique
+
+
+def process_file(file_path: str) -> list[dict]:
+    """
+    Parse a single DataStage XML file and return a list of row dicts
+    (one per qualifying stage × view-column combination).
+    """
+    rows: list[dict] = []
+
+    try:
+        tree = ET.parse(file_path)
+        root = tree.getroot()
+    except ET.ParseError as e:
+        print(f"  [ERROR] XML parse failed for {file_path}: {e}")
+        return rows
+
+    job_name = extract_job_name(root, file_path)
+    stages   = collect_stage_text(root)
+
+    for stage_name, info in stages.items():
+        stage_type = info["type"]
+        all_text   = info["all_text"]
+        stage_el   = info["element"]
+
+        # Must contain both required strings in stage text or type
+        combined = f"{stage_type} {all_text}"
+        if not all(s in combined for s in REQUIRED_STRINGS):
+            continue
+
+        sql      = extract_sql_from_stage(stage_el, all_text)
+        vc_pairs = extract_views_from_sql(sql)
+
+        if vc_pairs:
+            for view_name, view_col in vc_pairs:
+                rows.append({
+                    "Job/Sequence Name": job_name,
+                    "Stage Name":        stage_name,
+                    "SQL Query":         sql,
+                    "View Name":         view_name,
+                    "View Column":       view_col,
+                })
+        else:
+            rows.append({
+                "Job/Sequence Name": job_name,
+                "Stage Name":        stage_name,
+                "SQL Query":         sql,
+                "View Name":         "",
+                "View Column":       "",
+            })
+
+    return rows
+
+
+def main():
+    # Resolve input folder
+    input_folder = Path(INPUT_FOLDER).resolve()
+    if not input_folder.exists():
+        print(f"[ERROR] Input folder not found: {input_folder}")
+        print("        Update INPUT_FOLDER at the top of this script.")
+        return
+
+    xml_files = sorted(
+        glob.glob(str(input_folder / "*.xml")) +
+        glob.glob(str(input_folder / "**" / "*.xml"), recursive=True)
+    )
+
+    if not xml_files:
+        print(f"[WARN] No XML files found in: {input_folder}")
+        return
+
+    print(f"Found {len(xml_files)} XML file(s). Applying base criteria …\n")
+
+    all_rows:      list[dict] = []
+    skipped_count: int        = 0
+    processed_count: int      = 0
+
+    for fp in xml_files:
+        fname = Path(fp).name
+        if not file_meets_criteria(fp):
+            print(f"  [SKIP] {fname}  ← does not contain both required strings")
+            skipped_count += 1
+            continue
+
+        print(f"  [OK]   {fname}")
+        file_rows = process_file(fp)
+        all_rows.extend(file_rows)
+        processed_count += 1
+
+    print(f"\nProcessed: {processed_count}  |  Skipped: {skipped_count}")
+    print(f"Total rows extracted: {len(all_rows)}")
+
+    # Write CSV
+    output_path = Path(OUTPUT_CSV).resolve()
+    with output_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
+        writer.writeheader()
+        writer.writerows(all_rows)
+
+    print(f"\nCSV written to: {output_path}")
+
+
+if __name__ == "__main__":
+    main()
