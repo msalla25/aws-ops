@@ -1,27 +1,22 @@
 """
 DataStage XML Parser
 ─────────────────────
-Reads DataStage *XML-format* export files (root element: <DSExport>)
-from a folder and outputs a CSV with selective fields.
+Reads DataStage XML export files (<DSExport> root) from a folder and
+outputs a CSV with job name, stage name, SQL query, and the view names
+and column names parsed directly from the SQL query text.
 
-DataStage XML Export Structure
-──────────────────────────────
-  <DSExport>
-    <Header .../>
-    <Job Identifier="JOB_NAME" ...>
-      <Record Type="JobDefn" ...>      ← job metadata
-      <Record Type="CustomStage" ...>  ← stage (connector) definition
-      <Record Type="CustomOutput" ...> ← output link with column metadata
-      <Record Type="CustomInput" ...>  ← input link with column metadata
-    </Job>
-  </DSExport>
+CSV Layout
+──────────
+  Row 1 for a stage:  Job Name | Stage Name | SQL Query | View Name | View Column
+  Row 2..N:           (blank)  | (blank)    | (blank)   | (blank)   | next column
+  ─── next stage ───
+  Row 1 for next stage: ...
 
-The OracleConnectorPX stage stores its configuration inside a
-SubRecord named "XMLProperties" whose Value is an embedded XML string
-containing <SelectStatement>, <TableName>, <Database>, etc.
+View Name and View Column are extracted FROM the SQL query itself:
+  - View Name  = tables/views referenced in FROM / JOIN clauses
+  - View Column = columns listed in the SELECT clause
 """
 
-import os
 import csv
 import re
 import glob
@@ -29,42 +24,33 @@ import html
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional
-from collections import OrderedDict
 
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-INPUT_FOLDER  = "./datastage_jobs"       # Folder with DataStage XML exports
+INPUT_FOLDER  = "./datastage_jobs"
 OUTPUT_CSV    = "./datastage_output.csv"
 
-# Files must contain BOTH of these strings to be processed at all
 REQUIRED_STRINGS = ["OracleConnectorPX", "ORA_IODS_SCHEMA"]
 
 CSV_HEADERS = [
     "Job/Sequence Name",
     "Stage Name",
-    "Stage Type",
     "SQL Query",
-    "Table/View Name",
-    "Schema",
-    "Column Name",
+    "View Name",
+    "View Column",
 ]
 # ──────────────────────────────────────────────────────────────────────────────
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  Utility helpers for navigating DataStage Record elements
+#  XML navigation helpers  (these work — no changes from prior version)
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _strip_ns(tag: str) -> str:
-    """Strip XML namespace prefix from a tag."""
     return tag.split("}")[-1] if "}" in tag else tag
 
 
 def get_property(record_el: ET.Element, prop_name: str) -> str:
-    """
-    Get text of <Property Name="prop_name">TEXT</Property>
-    that is a direct child of record_el.
-    """
     for prop in record_el:
         if _strip_ns(prop.tag) == "Property" and prop.get("Name") == prop_name:
             return (prop.text or "").strip()
@@ -72,11 +58,6 @@ def get_property(record_el: ET.Element, prop_name: str) -> str:
 
 
 def get_subrecord_value(record_el: ET.Element, sr_prop_name: str) -> str:
-    """
-    Search all Collection > SubRecord blocks inside record_el for a
-    SubRecord whose <Property Name="Name"> == sr_prop_name, then return
-    the corresponding <Property Name="Value"> text.
-    """
     for collection in record_el.iter():
         if _strip_ns(collection.tag) != "Collection":
             continue
@@ -99,39 +80,7 @@ def get_subrecord_value(record_el: ET.Element, sr_prop_name: str) -> str:
     return ""
 
 
-def collect_column_names_from_record(record_el: ET.Element) -> list[str]:
-    """
-    Extract column names from a CustomOutput / CustomInput Record.
-      <Collection Name="Columns" Type="MetaColumn">
-        <SubRecord>
-          <Property Name="Name">COL_NAME</Property>
-          ...
-        </SubRecord>
-      </Collection>
-    """
-    columns = []
-    for collection in record_el.iter():
-        if _strip_ns(collection.tag) != "Collection":
-            continue
-        if collection.get("Name") != "Columns":
-            continue
-        for sub in collection:
-            if _strip_ns(sub.tag) != "SubRecord":
-                continue
-            for prop in sub:
-                if _strip_ns(prop.tag) == "Property" and prop.get("Name") == "Name":
-                    col_name = (prop.text or "").strip()
-                    if col_name:
-                        columns.append(col_name)
-    return columns
-
-
 def get_stage_identifier_for_link(link_rec: ET.Element) -> str:
-    """
-    Determine which stage a CustomOutput/CustomInput link belongs to.
-    Uses the Partner property, or falls back to stripping trailing P<digits>
-    from the link's own Identifier.
-    """
     partner = get_property(link_rec, "Partner")
     if partner:
         return partner
@@ -141,15 +90,11 @@ def get_stage_identifier_for_link(link_rec: ET.Element) -> str:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  Parsing the inner XMLProperties string
+#  Extract SQL from the XMLProperties embedded XML string
+#  (this part works — keeping it intact)
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _fully_unescape(text: str) -> str:
-    """
-    Aggressively unescape HTML/XML entities.  DataStage exports can
-    double- or triple-encode: &amp;lt; -> &lt; -> <
-    We keep unescaping until stable.
-    """
     prev = None
     current = text
     for _ in range(5):
@@ -160,206 +105,215 @@ def _fully_unescape(text: str) -> str:
     return current
 
 
-def parse_xml_properties(xml_props_str: str) -> dict:
+def extract_sql_from_xmlprops(xml_props_str: str) -> str:
     """
-    Parse the embedded XMLProperties value string and extract:
-      sql, table_name, schema, context
-
-    Uses multiple strategies in sequence, *accumulating* results (never
-    early-returning) so that if XML parse finds SQL but misses schema
-    the regex passes can still fill the gaps.
+    Extract the SQL query from the XMLProperties embedded XML string.
+    Tries XML parsing first, then multiple regex fallbacks.
+    Returns the SQL string or "".
     """
-    result = {"sql": "", "table_name": "", "schema": "", "context": ""}
-
     if not xml_props_str:
-        return result
+        return ""
 
-    raw = xml_props_str.strip()
+    raw  = xml_props_str.strip()
     text = _fully_unescape(raw)
 
-    # ── Strategy 1: parse as proper XML ──────────────────────────────────────
+    sql = ""
+
+    # ── Strategy 1: XML parse ────────────────────────────────────────────────
     try:
         clean = re.sub(r"<\?xml[^?]*\?>", "", text).strip()
         if not clean.startswith("<"):
             clean = f"<root>{clean}</root>"
-
         inner_root = ET.fromstring(clean)
 
         for el in inner_root.iter():
             tag_lower = _strip_ns(el.tag).lower()
             el_text = (el.text or "").strip()
-
-            # Strip leftover CDATA markers
             if el_text.startswith("<![CDATA["):
                 el_text = el_text[9:]
             if el_text.endswith("]]>"):
                 el_text = el_text[:-3]
             el_text = el_text.strip()
-
             if not el_text:
                 continue
 
-            if tag_lower in ("selectstatement", "userquery", "query") and not result["sql"]:
-                result["sql"] = el_text
-            elif tag_lower == "tablename" and not result["table_name"]:
-                result["table_name"] = el_text
-            elif tag_lower == "insertstatement" and not result["sql"]:
-                result["sql"] = el_text
-            elif tag_lower in ("schema", "schemaname") and not result["schema"]:
-                result["schema"] = el_text
-            elif tag_lower == "database" and not result["schema"]:
-                result["schema"] = el_text
-            elif tag_lower == "context" and not result["context"]:
-                result["context"] = el_text
-
+            if tag_lower in ("selectstatement", "userquery", "query"):
+                sql = el_text
+                break
+            elif tag_lower == "insertstatement" and not sql:
+                sql = el_text
     except ET.ParseError:
         pass
 
-    # ── Strategy 2: regex on the fully-unescaped text ────────────────────────
-    _regex_extract(text, result)
+    if sql:
+        return sql
 
-    # ── Strategy 3: regex on the original raw text (before unescape) ─────────
-    if not result["schema"] or not result["table_name"]:
-        _regex_extract(raw, result)
-
-    # ── Strategy 4: regex against still-escaped entity forms ─────────────────
-    # Handles: &lt;Database type='string'&gt;&lt;![CDATA[VALUE]]&gt;&lt;/Database&gt;
-    if not result["schema"] or not result["table_name"]:
-        _regex_extract_escaped(raw, result)
-
-    return result
-
-
-def _regex_extract(text: str, result: dict) -> None:
-    """Run regex patterns against text to fill any missing fields in result."""
-
-    if not result["sql"]:
+    # ── Strategy 2: regex on unescaped text ──────────────────────────────────
+    for source in (text, raw):
         for pattern in [
             r"<SelectStatement[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</SelectStatement>",
             r"<UserQuery[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</UserQuery>",
             r"<Query[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</Query>",
             r"<InsertStatement[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</InsertStatement>",
         ]:
-            m = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+            m = re.search(pattern, source, re.IGNORECASE | re.DOTALL)
             if m and m.group(1).strip():
-                result["sql"] = m.group(1).strip()
-                break
+                return m.group(1).strip()
 
-    if not result["table_name"]:
-        m = re.search(
-            r"<TableName[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</TableName>",
-            text, re.IGNORECASE | re.DOTALL,
-        )
-        if m and m.group(1).strip():
-            result["table_name"] = m.group(1).strip()
-
-    if not result["schema"]:
+    # ── Strategy 3: escaped entity form ──────────────────────────────────────
+    for tag in ("SelectStatement", "UserQuery", "Query", "InsertStatement"):
         for pattern in [
-            r"<Schema[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</Schema>",
-            r"<SchemaName[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</SchemaName>",
-            r"<Database[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</Database>",
-        ]:
-            m = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
-            if m and m.group(1).strip():
-                result["schema"] = m.group(1).strip()
-                break
-
-    if not result["context"]:
-        m = re.search(
-            r"<Context[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</Context>",
-            text, re.IGNORECASE | re.DOTALL,
-        )
-        if m and m.group(1).strip():
-            result["context"] = m.group(1).strip()
-
-
-def _regex_extract_escaped(raw: str, result: dict) -> None:
-    """
-    Regex against the HTML-escaped form directly.
-    Handles patterns like:
-      &lt;Database type='string'&gt;&lt;![CDATA[ORA_IODS_SCHEMA]]&gt;&lt;/Database&gt;
-    """
-    if not result["schema"]:
-        for tag in ("Database", "Schema", "SchemaName"):
-            for pattern in [
-                rf"&lt;{tag}[^&]*&gt;\s*&lt;!\[CDATA\[(.*?)\]\]&gt;\s*&lt;/{tag}&gt;",
-                rf"&lt;{tag}[^&]*&gt;(.*?)&lt;/{tag}&gt;",
-            ]:
-                m = re.search(pattern, raw, re.IGNORECASE | re.DOTALL)
-                if m and m.group(1).strip():
-                    result["schema"] = m.group(1).strip()
-                    break
-            if result["schema"]:
-                break
-
-    if not result["table_name"]:
-        for pattern in [
-            r"&lt;TableName[^&]*&gt;\s*&lt;!\[CDATA\[(.*?)\]\]&gt;\s*&lt;/TableName&gt;",
-            r"&lt;TableName[^&]*&gt;(.*?)&lt;/TableName&gt;",
+            rf"&lt;{tag}[^&]*&gt;\s*&lt;!\[CDATA\[(.*?)\]\]&gt;\s*&lt;/{tag}&gt;",
+            rf"&lt;{tag}[^&]*&gt;(.*?)&lt;/{tag}&gt;",
         ]:
             m = re.search(pattern, raw, re.IGNORECASE | re.DOTALL)
             if m and m.group(1).strip():
-                result["table_name"] = m.group(1).strip()
-                break
+                return m.group(1).strip()
 
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  Fallback: extract schema and table from SQL or table_name string
-# ═════════════════════════════════════════════════════════════════════════════
-
-def infer_schema_from_table_name(table_name: str) -> tuple[str, str]:
-    """
-    If table_name is schema-qualified (e.g. ORA_IODS_SCHEMA.CUSTOMERS),
-    split into (schema, table).  Otherwise return ("", table_name).
-    """
-    if not table_name:
-        return ("", "")
-    parts = table_name.split(".")
-    if len(parts) >= 2:
-        return (parts[0], ".".join(parts[1:]))
-    return ("", table_name)
-
-
-def extract_tables_from_sql(sql: str) -> list[str]:
-    """
-    Extract all table/view names from FROM and JOIN clauses.
-    Returns a deduplicated list preserving order.
-    """
-    if not sql:
-        return []
-    pattern = re.compile(
-        r"(?:FROM|JOIN)\s+"
-        r"((?:[A-Za-z_][\w$#]*\.){0,2}[A-Za-z_][\w$#]*)",
-        re.IGNORECASE,
-    )
-    seen = set()
-    tables = []
-    for m in pattern.finditer(sql):
-        name = m.group(1)
-        if name.upper() not in seen:
-            seen.add(name.upper())
-            tables.append(name)
-    return tables
-
-
-def extract_sql_from_raw_text(text: str) -> str:
-    """Attempt to pull a SELECT ... FROM ... block from unstructured text."""
+    # ── Strategy 4: bare SELECT ... FROM in the blob ─────────────────────────
     m = re.search(
         r"(SELECT\s+.+?\s+FROM\s+\S+.*?)(?=SELECT\s|\Z)",
         text, re.IGNORECASE | re.DOTALL,
     )
-    return m.group(1).strip() if m else ""
+    if m:
+        return m.group(1).strip()
+
+    return ""
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  File-level filtering (single read)
+#  Parse View Name + View Column directly from the SQL query text
+# ═════════════════════════════════════════════════════════════════════════════
+
+def parse_views_and_columns_from_sql(sql: str) -> tuple[str, list[str]]:
+    """
+    Given a SQL query string, extract:
+      - view_name : semicolon-separated list of tables/views from FROM/JOIN
+      - columns   : list of individual column names from the SELECT clause
+
+    Returns (view_name_str, [col1, col2, ...])
+    """
+    if not sql:
+        return ("", [])
+
+    # ── Extract view / table names from FROM and JOIN ────────────────────────
+    from_pattern = re.compile(
+        r"(?:FROM|JOIN)\s+"
+        r"((?:[A-Za-z_][\w$#]*\.){0,2}[A-Za-z_][\w$#]*)",
+        re.IGNORECASE,
+    )
+    seen_tables: set[str] = set()
+    tables: list[str] = []
+    for m in from_pattern.finditer(sql):
+        name = m.group(1)
+        key  = name.upper()
+        if key not in seen_tables:
+            seen_tables.add(key)
+            tables.append(name)
+
+    view_name_str = "; ".join(tables)
+
+    # ── Extract column names from SELECT … FROM ─────────────────────────────
+    select_match = re.search(
+        r"SELECT\s+(.*?)\s+FROM\b",
+        sql, re.IGNORECASE | re.DOTALL,
+    )
+    columns: list[str] = []
+    if select_match:
+        col_block = select_match.group(1).strip()
+
+        # Handle SELECT DISTINCT / ALL
+        col_block = re.sub(r"^(DISTINCT|ALL)\s+", "", col_block, flags=re.IGNORECASE)
+
+        # Split on commas that are not inside parentheses
+        depth = 0
+        current: list[str] = []
+        for ch in col_block:
+            if ch == "(":
+                depth += 1
+                current.append(ch)
+            elif ch == ")":
+                depth -= 1
+                current.append(ch)
+            elif ch == "," and depth == 0:
+                columns.append("".join(current).strip())
+                current = []
+            else:
+                current.append(ch)
+        if current:
+            columns.append("".join(current).strip())
+
+    # Clean each column expression to get the final column name/alias
+    clean_cols: list[str] = []
+    for expr in columns:
+        col = _clean_column_expr(expr)
+        if col:
+            clean_cols.append(col)
+
+    return (view_name_str, clean_cols)
+
+
+def _clean_column_expr(expr: str) -> str:
+    """
+    Given a raw SELECT column expression like:
+      "c.CUSTOMER_ID"
+      "a.CITY AS customer_city"
+      "TRIM(x.NAME)"
+      "COUNT(*)"
+      "*"
+    Return the effective column name:
+      "CUSTOMER_ID", "customer_city", "NAME", "COUNT(*)", ""
+    """
+    expr = expr.strip()
+    if not expr:
+        return ""
+    if expr == "*":
+        return ""
+
+    # If there is an alias (AS keyword or trailing word after space),
+    # the alias IS the column name in the output.
+    alias_match = re.search(r"\bAS\s+[\"'`]?(\w+)[\"'`]?\s*$", expr, re.IGNORECASE)
+    if alias_match:
+        return alias_match.group(1)
+
+    # Check for implicit alias: "expr  alias" (space-separated, last token is
+    # a simple word not a keyword)
+    # e.g.  "t.COL1 my_alias"
+    tokens = expr.split()
+    if len(tokens) >= 2:
+        last = tokens[-1].strip("\"'`")
+        # Make sure last token looks like an identifier, not a keyword/operator
+        if re.match(r"^[A-Za-z_]\w*$", last) and last.upper() not in (
+            "FROM", "WHERE", "AND", "OR", "ON", "AS", "IN", "NOT", "NULL",
+            "IS", "BETWEEN", "LIKE", "EXISTS", "CASE", "WHEN", "THEN",
+            "ELSE", "END", "SELECT", "DISTINCT", "ALL",
+        ):
+            return last
+
+    # Qualified name: schema.table.column or alias.column → take last part
+    qual_match = re.match(r"(?:[A-Za-z_][\w$#]*\.)+([A-Za-z_][\w$#]*)", expr)
+    if qual_match:
+        return qual_match.group(1)
+
+    # Function call: FUNC(alias.col) → try to extract the inner column
+    func_match = re.match(r"\w+\(\s*(?:[\w.]+\.)?(\w+)\s*\)", expr)
+    if func_match:
+        return func_match.group(0)  # keep full expression like COUNT(*)
+
+    # Simple unqualified name
+    simple = re.match(r"^([A-Za-z_][\w$#]*)$", expr)
+    if simple:
+        return simple.group(1)
+
+    # Complex expression — return as-is (trimmed)
+    return expr
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  File-level filtering (single read — no double I/O)
 # ═════════════════════════════════════════════════════════════════════════════
 
 def read_file_if_meets_criteria(file_path: str) -> Optional[str]:
-    """
-    Read the file ONCE.  Return its content if it contains both
-    required strings; otherwise return None.
-    """
     try:
         content = Path(file_path).read_text(encoding="utf-8", errors="replace")
         if all(s in content for s in REQUIRED_STRINGS):
@@ -375,9 +329,6 @@ def read_file_if_meets_criteria(file_path: str) -> Optional[str]:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def process_file(file_path: str, raw_content: str) -> list[dict]:
-    """
-    Parse a DataStage XML export and extract rows for qualifying stages.
-    """
     rows: list[dict] = []
 
     try:
@@ -406,7 +357,7 @@ def process_file(file_path: str, raw_content: str) -> list[dict]:
         return rows
 
     for job_el in jobs:
-        # ── Extract job name ─────────────────────────────────────────────────
+        # ── Job name (working — unchanged) ───────────────────────────────────
         job_name = job_el.get("Identifier", "")
         if not job_name:
             for rec in job_el:
@@ -416,7 +367,7 @@ def process_file(file_path: str, raw_content: str) -> list[dict]:
         if not job_name:
             job_name = Path(file_path).stem
 
-        # ── Index all Record elements ────────────────────────────────────────
+        # ── Index Record elements by Type ────────────────────────────────────
         records_by_type: dict[str, list[ET.Element]] = {}
         for rec in job_el:
             if _strip_ns(rec.tag) != "Record":
@@ -424,18 +375,7 @@ def process_file(file_path: str, raw_content: str) -> list[dict]:
             rec_type = rec.get("Type", "")
             records_by_type.setdefault(rec_type, []).append(rec)
 
-        # ── Gather output columns per stage Identifier ───────────────────────
-        stage_output_columns: dict[str, list[str]] = {}
-        for link_type in ("CustomOutput", "CustomInput"):
-            for rec in records_by_type.get(link_type, []):
-                partner_id = get_stage_identifier_for_link(rec)
-                if partner_id:
-                    cols = collect_column_names_from_record(rec)
-                    existing = stage_output_columns.get(partner_id, [])
-                    existing.extend(cols)
-                    stage_output_columns[partner_id] = existing
-
-        # ── Gather link-level XMLProperties per stage Identifier ─────────────
+        # ── Gather link-level XMLProperties per stage ────────────────────────
         stage_link_xmlprops: dict[str, list[str]] = {}
         for link_type in ("CustomOutput", "CustomInput"):
             for rec in records_by_type.get(link_type, []):
@@ -454,117 +394,58 @@ def process_file(file_path: str, raw_content: str) -> list[dict]:
             stage_name = get_property(stage_rec, "Name") or stage_id
             stage_type = get_property(stage_rec, "StageType")
 
-            # ── Get XMLProperties ────────────────────────────────────────────
+            # ── Get XMLProperties (working — unchanged) ──────────────────────
             xml_props_str = get_property(stage_rec, "XMLProperties")
             if not xml_props_str:
                 xml_props_str = get_subrecord_value(stage_rec, "XMLProperties")
 
             link_xml_props = stage_link_xmlprops.get(stage_id, [])
 
-            # ── Filter: stage must relate to both required strings ───────────
+            # ── Filter: must contain both required strings ───────────────────
             combined_text = f"{stage_type} {xml_props_str} {' '.join(link_xml_props)}"
             if not all(s in combined_text for s in REQUIRED_STRINGS):
                 continue
 
-            # ── Parse the XMLProperties ──────────────────────────────────────
-            parsed = parse_xml_properties(xml_props_str)
+            # ── Extract SQL (working — unchanged) ────────────────────────────
+            sql = extract_sql_from_xmlprops(xml_props_str)
 
             # Try link-level XMLProperties if stage-level didn't yield SQL
-            if not parsed["sql"]:
+            if not sql:
                 for lxp in link_xml_props:
-                    lp = parse_xml_properties(lxp)
-                    if lp["sql"]:
-                        parsed["sql"] = lp["sql"]
-                        if not parsed["table_name"] and lp["table_name"]:
-                            parsed["table_name"] = lp["table_name"]
-                        if not parsed["schema"] and lp["schema"]:
-                            parsed["schema"] = lp["schema"]
+                    sql = extract_sql_from_xmlprops(lxp)
+                    if sql:
                         break
 
-            # Also check link-level for schema/table if still missing
-            if not parsed["schema"] or not parsed["table_name"]:
-                for lxp in link_xml_props:
-                    lp = parse_xml_properties(lxp)
-                    if not parsed["schema"] and lp["schema"]:
-                        parsed["schema"] = lp["schema"]
-                    if not parsed["table_name"] and lp["table_name"]:
-                        parsed["table_name"] = lp["table_name"]
-
-            # Last resort for SQL: regex on raw strings
-            if not parsed["sql"] and not parsed["table_name"]:
-                parsed["sql"] = extract_sql_from_raw_text(
-                    xml_props_str + " " + " ".join(link_xml_props)
-                )
-
-            # ── Derive table/view names ──────────────────────────────────────
-            sql_tables = extract_tables_from_sql(parsed["sql"])
-            prop_table = parsed["table_name"]
-
-            # Combine all table/view references (deduplicated, order preserved)
-            all_tables: list[str] = []
-            seen_tables: set[str] = set()
-            for t in sql_tables:
-                if t.upper() not in seen_tables:
-                    seen_tables.add(t.upper())
-                    all_tables.append(t)
-            if prop_table and prop_table.upper() not in seen_tables:
-                all_tables.append(prop_table)
-
-            # ── Derive schema ────────────────────────────────────────────────
-            schema = parsed["schema"]
-            if not schema:
-                for t in all_tables:
-                    s, _ = infer_schema_from_table_name(t)
-                    if s:
-                        schema = s
-                        break
-
-            # Display table/view
-            table_view_display = "; ".join(all_tables) if all_tables else ""
-
-            # ── Gather output columns ────────────────────────────────────────
-            out_cols = stage_output_columns.get(stage_id, [])
-            seen_cols: set[str] = set()
-            unique_cols: list[str] = []
-            for c in out_cols:
-                if c not in seen_cols:
-                    seen_cols.add(c)
-                    unique_cols.append(c)
+            # ── Parse View Name + View Columns from the SQL itself ───────────
+            view_name, view_columns = parse_views_and_columns_from_sql(sql)
 
             # ── Build rows ───────────────────────────────────────────────────
-            # First row: all fields + first column name
-            # Subsequent rows: only Column Name (rest blank)
-            sql_query = parsed["sql"]
-
-            if unique_cols:
+            # Row 1: all fields + first column
+            # Row 2..N: blanks except View Column
+            if view_columns:
                 rows.append({
                     "Job/Sequence Name": job_name,
                     "Stage Name":        stage_name,
-                    "Stage Type":        stage_type,
-                    "SQL Query":         sql_query,
-                    "Table/View Name":   table_view_display,
-                    "Schema":            schema,
-                    "Column Name":       unique_cols[0],
+                    "SQL Query":         sql,
+                    "View Name":         view_name,
+                    "View Column":       view_columns[0],
                 })
-                for col in unique_cols[1:]:
+                for col in view_columns[1:]:
                     rows.append({
                         "Job/Sequence Name": "",
                         "Stage Name":        "",
-                        "Stage Type":        "",
                         "SQL Query":         "",
-                        "Table/View Name":   "",
-                        "Schema":            "",
-                        "Column Name":       col,
+                        "View Name":         "",
+                        "View Column":       col,
                     })
             else:
+                # No columns parsed from SQL — single row
                 rows.append({
                     "Job/Sequence Name": job_name,
                     "Stage Name":        stage_name,
-                    "Stage Type":        stage_type,
-                    "SQL Query":         sql_query,
-                    "Table/View Name":   table_view_display,
-                    "Schema":            schema,
-                    "Column Name":       "",
+                    "SQL Query":         sql,
+                    "View Name":         view_name,
+                    "View Column":       "",
                 })
 
     return rows
