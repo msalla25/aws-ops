@@ -1,49 +1,74 @@
-import os
-import winrm
+---
+- name: Restart all pods in an OpenShift namespace
+  hosts: localhost
+  gather_facts: false
 
-# Read environment variables from GitLab CI
-host = os.environ["WINRM_HOST"]
-user = os.environ["WINRM_USER"]
-python_path = os.environ["PYTHON_PATH"]
-deploy_path = os.environ["DEPLOY_PATH"]
-venv_path = os.environ["VENV_PATH"]
-wheel_name = os.environ["WHEEL_NAME"]
+  vars:
+    ocp_cluster_url: "https://api.your-cluster.example.com:6443"   # Override via -e or vars file
+    ocp_token: "sha256~your-token-here"                             # Override via -e or vars file
+    ocp_namespace: "your-namespace"                                 # Override via -e or vars file
+    k8s_api_base: "{{ ocp_cluster_url }}/api/v1"
 
-# Establish WinRM session over HTTPS 5986 using Kerberos
-session = winrm.Session(
-    f"https://{host}:5986/wsman",
-    auth=(user, None),           # password not needed if kinit ticket exists
-    transport="kerberos",
-    server_cert_validation="ignore"
-)
+  tasks:
 
-# Powershell script to create venv and install wheel
-ps_script = f"""
-$ErrorActionPreference = 'Stop'
+    # ------------------------------------------------------------------ #
+    # 1. Fetch all pods in the namespace
+    # ------------------------------------------------------------------ #
+    - name: Get all pods in namespace
+      ansible.builtin.uri:
+        url: "{{ k8s_api_base }}/namespaces/{{ ocp_namespace }}/pods"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ ocp_token }}"
+          Content-Type: "application/json"
+        validate_certs: false          # Set to true in production with proper CA
+        status_code: 200
+      register: pods_response
 
-# Ensure deploy folder exists
-if (-not (Test-Path "{deploy_path}")) {{
-    New-Item -Path "{deploy_path}" -ItemType Directory -Force | Out-Null
-}}
+    # ------------------------------------------------------------------ #
+    # 2. Parse pod names from the API response
+    # ------------------------------------------------------------------ #
+    - name: Set pod names list
+      ansible.builtin.set_fact:
+        pod_names: "{{ pods_response.json.items | map(attribute='metadata.name') | list }}"
 
-# Create venv if missing
-if (-not (Test-Path (Join-Path "{venv_path}" 'Scripts\\python.exe'))) {{
-    & "{python_path}" -m venv "{venv_path}"
-}}
+    - name: Show pods to be deleted
+      ansible.builtin.debug:
+        msg: "Found {{ pod_names | length }} pod(s) to delete: {{ pod_names }}"
 
-# Activate venv and install wheel
-$activate = Join-Path "{venv_path}" 'Scripts\\Activate.ps1'
-& $activate
-pip install --upgrade pip
-pip install (Join-Path "{deploy_path}" "{wheel_name}")
-"""
+    # ------------------------------------------------------------------ #
+    # 3. Abort early if no pods found
+    # ------------------------------------------------------------------ #
+    - name: Abort if no pods found
+      ansible.builtin.meta: end_play
+      when: pod_names | length == 0
 
-res = session.run_ps(ps_script)
+    # ------------------------------------------------------------------ #
+    # 4. Delete each pod (controllers will restart them automatically)
+    # ------------------------------------------------------------------ #
+    - name: Delete pod {{ item }}
+      ansible.builtin.uri:
+        url: "{{ k8s_api_base }}/namespaces/{{ ocp_namespace }}/pods/{{ item }}"
+        method: DELETE
+        headers:
+          Authorization: "Bearer {{ ocp_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          gracePeriodSeconds: 0          # Immediate kill; remove for graceful shutdown
+        validate_certs: false
+        status_code: [200, 202, 404]     # 404 = already gone, treat as OK
+      loop: "{{ pod_names }}"
+      register: delete_results
 
-print("STDOUT:", res.std_out.decode())
-print("STDERR:", res.std_err.decode())
-
-if res.status_code != 0:
-    raise Exception(f"Deployment failed with exit code {res.status_code}")
-else:
-    print("✅ Deployment completed successfully.")
+    # ------------------------------------------------------------------ #
+    # 5. Summary
+    # ------------------------------------------------------------------ #
+    - name: Deletion summary
+      ansible.builtin.debug:
+        msg: >-
+          Pod '{{ item.item }}' →
+          {{ 'DELETED' if item.status in [200, 202] else 'ALREADY GONE' }}
+      loop: "{{ delete_results.results }}"
+      loop_control:
+        label: "{{ item.item }}"
