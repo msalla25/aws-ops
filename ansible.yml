@@ -4,9 +4,9 @@
   gather_facts: false
 
   vars:
-    ocp_cluster_url: "https://api.your-cluster.example.com:6443"   # Override via -e or vars file
-    ocp_token: "sha256~your-token-here"                             # Override via -e or vars file
-    ocp_namespace: "your-namespace"                                 # Override via -e or vars file
+    ocp_cluster_url: "https://api.your-cluster.example.com:6443"
+    ocp_token: "sha256~your-token-here"
+    ocp_namespace: "your-namespace"
     k8s_api_base: "{{ ocp_cluster_url }}/api/v1"
 
   tasks:
@@ -21,16 +21,16 @@
         headers:
           Authorization: "Bearer {{ ocp_token }}"
           Content-Type: "application/json"
-        validate_certs: false          # Set to true in production with proper CA
+        validate_certs: false
         status_code: 200
       register: pods_response
 
     # ------------------------------------------------------------------ #
-    # 2. Parse pod names from the API response
+    # 2. Parse pod names safely without map() or jmespath
     # ------------------------------------------------------------------ #
     - name: Set pod names list
       ansible.builtin.set_fact:
-        pod_names: "{{ pods_response.json.items | map(attribute='metadata.name') | list }}"
+        pod_names: "{{ pods_response.json['items'] | map(attribute='metadata') | map(attribute='name') | list }}"
 
     - name: Show pods to be deleted
       ansible.builtin.debug:
@@ -46,7 +46,7 @@
     # ------------------------------------------------------------------ #
     # 4. Delete each pod (controllers will restart them automatically)
     # ------------------------------------------------------------------ #
-    - name: Delete pod {{ item }}
+    - name: "Delete pod {{ item }}"
       ansible.builtin.uri:
         url: "{{ k8s_api_base }}/namespaces/{{ ocp_namespace }}/pods/{{ item }}"
         method: DELETE
@@ -55,9 +55,9 @@
           Content-Type: "application/json"
         body_format: json
         body:
-          gracePeriodSeconds: 0          # Immediate kill; remove for graceful shutdown
+          gracePeriodSeconds: 0
         validate_certs: false
-        status_code: [200, 202, 404]     # 404 = already gone, treat as OK
+        status_code: [200, 202, 404]
       loop: "{{ pod_names }}"
       register: delete_results
 
@@ -67,7 +67,7 @@
     - name: Deletion summary
       ansible.builtin.debug:
         msg: >-
-          Pod '{{ item.item }}' →
+          Pod '{{ item.item }}' ->
           {{ 'DELETED' if item.status in [200, 202] else 'ALREADY GONE' }}
       loop: "{{ delete_results.results }}"
       loop_control:
