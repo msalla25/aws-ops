@@ -197,22 +197,30 @@ def parse_views_and_columns_from_sql(sql: str) -> tuple[str, list[str]]:
 
     # Normalize: replace literal escape sequences and collapse whitespace
     norm = sql.replace("\\n", " ").replace("\\r", " ").replace("\\t", " ")
+    # Strip SQL single-line comments (-- to end of line)
+    norm = re.sub(r"--[^\n]*", " ", norm)
+    # Strip SQL block comments (/* ... */)
+    norm = re.sub(r"/\*.*?\*/", " ", norm, flags=re.DOTALL)
     norm = re.sub(r"\s+", " ", norm)
 
     # ── View / table names from FROM and JOIN ────────────────────────────────
-    # Very broad pattern: FROM/JOIN followed by any reasonable object name
-    # Handles: SCHEMA.VIEW, "SCHEMA"."VIEW", SCHEMA.VIEW@DBLINK, (subquery)
+    # Handles:
+    #   SCHEMA.VIEW                            — plain names
+    #   "SCHEMA"."VIEW"                        — quoted identifiers
+    #   #$ORA_IODS_SCHEMA#.iods_ast_v          — DataStage parameter markers
+    #   SCHEMA.VIEW@DBLINK                     — Oracle DB links
+    #   ( subquery ) alias                     — skipped (starts with parenthesis)
+    #
+    # A "name part" is one of:
+    #   - A DS parameter:   #$PARAM_NAME#
+    #   - A quoted ident:   "something"
+    #   - A regular ident:  letter_or_underscore followed by word chars
+    _NAME_PART = r'(?:#\$[\w]+#|"[^"]+"|[A-Za-z_][\w$#]*)'
+
     from_pattern = re.compile(
-        r"\b(?:FROM|JOIN)\s+"
-        r"("
-            r"(?:"
-                r'"[^"]+"|[A-Za-z_][\w$#]*'   # first part (quoted or unquoted)
-            r")"
-            r"(?:"
-                r"\s*\.\s*"
-                r'(?:"[^"]+"|[A-Za-z_][\w$#]*)'
-            r"){0,2}"                           # up to 3-part name
-            r"(?:@[A-Za-z_][\w$#]*)?"          # optional @dblink
+        r"(?:FROM|JOIN)\s+"
+        r"(" + _NAME_PART + r"(?:\s*\.\s*" + _NAME_PART + r"){0,2}"
+        r"(?:@[A-Za-z_][\w$#]*)?"     # optional @dblink
         r")",
         re.IGNORECASE,
     )
