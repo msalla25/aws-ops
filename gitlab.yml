@@ -2,13 +2,9 @@
 DataStage XML Parser
 ─────────────────────
 Reads DataStage XML export files (<DSExport> root) from a folder and
-outputs a CSV with job name, stage name, SQL query, and the view names
-and column names parsed directly from the SQL query text.
+outputs an Excel file (.xlsx) with merged cells for readability.
 
-CSV Layout
-──────────
-  Row 1 for a stage:  Job Name | Stage Name | SQL Query | View Name | View Column
-  Row 2..N:           (blank)  | (blank)    | (blank)   | (blank)   | next column
+View Name and View Column are extracted from the SQL query text itself.
 """
 
 import csv
@@ -22,7 +18,9 @@ from typing import Optional
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 INPUT_FOLDER  = "./datastage_jobs"
-OUTPUT_CSV    = "./datastage_output.csv"
+OUTPUT_XLSX   = "./datastage_output.xlsx"
+OUTPUT_CSV    = "./datastage_output.csv"       # also produce CSV as backup
+DIAG_LOG      = "./datastage_diagnostic.log"   # diagnostic log
 
 REQUIRED_STRINGS = ["OracleConnectorPX", "ORA_IODS_SCHEMA"]
 
@@ -34,6 +32,12 @@ CSV_HEADERS = [
     "View Column",
 ]
 # ──────────────────────────────────────────────────────────────────────────────
+
+diag_lines: list[str] = []   # collects diagnostic output
+
+def diag(msg: str):
+    print(msg)
+    diag_lines.append(msg)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -98,6 +102,12 @@ def _fully_unescape(text: str) -> str:
     return current
 
 
+def _get_full_text(el: ET.Element) -> str:
+    """Get ALL text from an element including text in children (itertext).
+    This handles cases where el.text only has partial content."""
+    return "".join(el.itertext()).strip()
+
+
 def extract_sql_from_xmlprops(xml_props_str: str) -> str:
     """Extract the SQL query from the XMLProperties embedded XML string."""
     if not xml_props_str:
@@ -108,7 +118,7 @@ def extract_sql_from_xmlprops(xml_props_str: str) -> str:
 
     sql = ""
 
-    # Strategy 1: XML parse
+    # Strategy 1: XML parse — use itertext() to get ALL text from elements
     try:
         clean = re.sub(r"<\?xml[^?]*\?>", "", text).strip()
         if not clean.startswith("<"):
@@ -117,27 +127,30 @@ def extract_sql_from_xmlprops(xml_props_str: str) -> str:
 
         for el in inner_root.iter():
             tag_lower = _strip_ns(el.tag).lower()
-            el_text = (el.text or "").strip()
-            if el_text.startswith("<![CDATA["):
-                el_text = el_text[9:]
-            if el_text.endswith("]]>"):
-                el_text = el_text[:-3]
-            el_text = el_text.strip()
-            if not el_text:
-                continue
 
-            if tag_lower in ("selectstatement", "userquery", "query"):
-                sql = el_text
-                break
-            elif tag_lower == "insertstatement" and not sql:
-                sql = el_text
+            if tag_lower in ("selectstatement", "userquery", "query", "insertstatement"):
+                # Use itertext to get ALL text, not just el.text
+                full_text = _get_full_text(el)
+                # Also try el.text directly
+                el_text = (el.text or "").strip()
+
+                # Pick whichever is longer (more complete)
+                candidate = full_text if len(full_text) >= len(el_text) else el_text
+
+                # Strip leftover CDATA markers
+                candidate = re.sub(r"<!\[CDATA\[", "", candidate)
+                candidate = re.sub(r"\]\]>", "", candidate)
+                candidate = candidate.strip()
+
+                if candidate and len(candidate) > len(sql):
+                    sql = candidate
     except ET.ParseError:
         pass
 
     if sql:
         return sql
 
-    # Strategy 2: regex on unescaped then raw text
+    # Strategy 2: regex — try many patterns on both unescaped and raw text
     for source in (text, raw):
         for pattern in [
             r"<SelectStatement[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</SelectStatement>",
@@ -157,9 +170,9 @@ def extract_sql_from_xmlprops(xml_props_str: str) -> str:
         ]:
             m = re.search(pattern, raw, re.IGNORECASE | re.DOTALL)
             if m and m.group(1).strip():
-                return m.group(1).strip()
+                return _fully_unescape(m.group(1).strip())
 
-    # Strategy 4: bare SELECT in the blob
+    # Strategy 4: just find SELECT...FROM anywhere in the blob
     m = re.search(
         r"(SELECT\s+.+?\s+FROM\s+\S+.*?)(?=SELECT\s|\Z)",
         text, re.IGNORECASE | re.DOTALL,
@@ -171,56 +184,44 @@ def extract_sql_from_xmlprops(xml_props_str: str) -> str:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  Parse View Name + View Column directly from the SQL query text
+#  Parse View Name + View Column from the SQL query text
 # ═════════════════════════════════════════════════════════════════════════════
-
-# Regex for an Oracle-style object name: handles quoted or unquoted,
-# with optional schema prefix and optional DB link (@dblink)
-#   Examples matched:
-#     CUSTOMERS
-#     ORA_IODS_SCHEMA.CUSTOMERS
-#     "ORA_IODS_SCHEMA"."CUSTOMERS"
-#     SCHEMA . VIEW_NAME
-#     SCHEMA.VIEW@DBLINK
-_OBJ_NAME = (
-    r"(?:"
-        r'"[^"]+"|[A-Za-z_][\w$#]*'       # one part (quoted or unquoted)
-    r")"
-    r"(?:"
-        r"\s*\.\s*"                         # dot (with optional spaces)
-        r'(?:"[^"]+"|[A-Za-z_][\w$#]*)'    # another part
-    r"){0,2}"                               # up to schema.table.column
-    r"(?:@[A-Za-z_][\w$#]*)?"              # optional @dblink
-)
-
-_FROM_JOIN_RE = re.compile(
-    r"(?:FROM|JOIN)\s+"
-    r"(" + _OBJ_NAME + r")",
-    re.IGNORECASE,
-)
-
 
 def parse_views_and_columns_from_sql(sql: str) -> tuple[str, list[str]]:
     """
-    Given a SQL query string, extract:
-      - view_name : semicolon-separated list of tables/views from FROM/JOIN
-      - columns   : list of individual column names from the SELECT clause
-
+    Extract view/table names from FROM/JOIN and column names from SELECT.
     Returns (view_name_str, [col1, col2, ...])
     """
     if not sql:
         return ("", [])
 
-    # ── Normalize whitespace (handle literal \n, \r, \t) ────────────────────
-    norm_sql = sql.replace("\\n", " ").replace("\\r", " ").replace("\\t", " ")
+    # Normalize: replace literal escape sequences and collapse whitespace
+    norm = sql.replace("\\n", " ").replace("\\r", " ").replace("\\t", " ")
+    norm = re.sub(r"\s+", " ", norm)
 
-    # ── Extract view / table names from FROM and JOIN ────────────────────────
+    # ── View / table names from FROM and JOIN ────────────────────────────────
+    # Very broad pattern: FROM/JOIN followed by any reasonable object name
+    # Handles: SCHEMA.VIEW, "SCHEMA"."VIEW", SCHEMA.VIEW@DBLINK, (subquery)
+    from_pattern = re.compile(
+        r"\b(?:FROM|JOIN)\s+"
+        r"("
+            r"(?:"
+                r'"[^"]+"|[A-Za-z_][\w$#]*'   # first part (quoted or unquoted)
+            r")"
+            r"(?:"
+                r"\s*\.\s*"
+                r'(?:"[^"]+"|[A-Za-z_][\w$#]*)'
+            r"){0,2}"                           # up to 3-part name
+            r"(?:@[A-Za-z_][\w$#]*)?"          # optional @dblink
+        r")",
+        re.IGNORECASE,
+    )
+
     seen_tables: set[str] = set()
     tables: list[str] = []
-    for m in _FROM_JOIN_RE.finditer(norm_sql):
+    for m in from_pattern.finditer(norm):
         raw_name = m.group(1).strip()
-        # Normalize: remove spaces around dots, strip quotes for dedup key
-        clean = re.sub(r'\s*\.\s*', '.', raw_name)
+        clean = re.sub(r"\s*\.\s*", ".", raw_name)
         key = clean.upper().replace('"', '')
         if key not in seen_tables:
             seen_tables.add(key)
@@ -228,17 +229,16 @@ def parse_views_and_columns_from_sql(sql: str) -> tuple[str, list[str]]:
 
     view_name_str = "; ".join(tables)
 
-    # ── Extract column names from SELECT … FROM ─────────────────────────────
+    # ── Column names from SELECT … FROM ──────────────────────────────────────
     select_match = re.search(
-        r"SELECT\s+(.*?)\s+FROM\b",
-        norm_sql, re.IGNORECASE | re.DOTALL,
+        r"\bSELECT\s+(.*?)\s+FROM\b",
+        norm, re.IGNORECASE | re.DOTALL,
     )
     columns: list[str] = []
     if select_match:
         col_block = select_match.group(1).strip()
         col_block = re.sub(r"^(DISTINCT|ALL)\s+", "", col_block, flags=re.IGNORECASE)
 
-        # Split on commas not inside parentheses
         depth = 0
         current: list[str] = []
         for ch in col_block:
@@ -266,24 +266,16 @@ def parse_views_and_columns_from_sql(sql: str) -> tuple[str, list[str]]:
 
 
 def _clean_column_expr(expr: str) -> str:
-    """
-    Given a raw SELECT column expression, return the effective column name.
-    Examples:
-      "c.CUSTOMER_ID"          → "CUSTOMER_ID"
-      "a.CITY AS customer_city"→ "customer_city"
-      "TRIM(x.NAME)"          → "TRIM(x.NAME)"
-      "*"                      → ""
-    """
     expr = expr.strip()
     if not expr or expr == "*":
         return ""
 
-    # Explicit alias: ... AS alias
+    # Explicit AS alias
     alias_match = re.search(r"\bAS\s+[\"'`]?(\w+)[\"'`]?\s*$", expr, re.IGNORECASE)
     if alias_match:
         return alias_match.group(1)
 
-    # Implicit alias: last space-separated token if it's a simple identifier
+    # Implicit alias (last token)
     tokens = expr.split()
     if len(tokens) >= 2:
         last = tokens[-1].strip("\"'`")
@@ -294,17 +286,16 @@ def _clean_column_expr(expr: str) -> str:
         ):
             return last
 
-    # Qualified name: schema.table.column or alias.column → last part
+    # Qualified: alias.column → last part
     qual_match = re.match(r'(?:(?:"[^"]+"|[A-Za-z_][\w$#]*)\s*\.\s*)+([A-Za-z_][\w$#]*)', expr)
     if qual_match:
         return qual_match.group(1)
 
-    # Simple unqualified name
+    # Simple name
     simple = re.match(r"^([A-Za-z_][\w$#]*)$", expr)
     if simple:
         return simple.group(1)
 
-    # Complex expression — return as-is
     return expr
 
 
@@ -319,7 +310,7 @@ def read_file_if_meets_criteria(file_path: str) -> Optional[str]:
             return content
         return None
     except Exception as e:
-        print(f"  [WARN] Could not read {file_path}: {e}")
+        diag(f"  [WARN] Could not read {file_path}: {e}")
         return None
 
 
@@ -333,12 +324,11 @@ def process_file(file_path: str, raw_content: str) -> list[dict]:
     try:
         root = ET.fromstring(raw_content)
     except ET.ParseError as e:
-        print(f"  [ERROR] XML parse failed for {file_path}: {e}")
+        diag(f"  [ERROR] XML parse failed for {file_path}: {e}")
         return rows
 
     root_tag = _strip_ns(root.tag)
 
-    # Locate Job elements
     jobs: list[ET.Element] = []
     if root_tag == "DSExport":
         for child in root:
@@ -352,11 +342,10 @@ def process_file(file_path: str, raw_content: str) -> list[dict]:
                 jobs.append(el)
 
     if not jobs:
-        print(f"  [WARN] No <Job> elements found in {Path(file_path).name}")
+        diag(f"  [WARN] No <Job> elements found in {Path(file_path).name}")
         return rows
 
     for job_el in jobs:
-        # Job name
         job_name = job_el.get("Identifier", "")
         if not job_name:
             for rec in job_el:
@@ -366,7 +355,6 @@ def process_file(file_path: str, raw_content: str) -> list[dict]:
         if not job_name:
             job_name = Path(file_path).stem
 
-        # Index Record elements by Type
         records_by_type: dict[str, list[ET.Element]] = {}
         for rec in job_el:
             if _strip_ns(rec.tag) != "Record":
@@ -374,7 +362,6 @@ def process_file(file_path: str, raw_content: str) -> list[dict]:
             rec_type = rec.get("Type", "")
             records_by_type.setdefault(rec_type, []).append(rec)
 
-        # Gather link-level XMLProperties per stage
         stage_link_xmlprops: dict[str, list[str]] = {}
         for link_type in ("CustomOutput", "CustomInput"):
             for rec in records_by_type.get(link_type, []):
@@ -387,20 +374,17 @@ def process_file(file_path: str, raw_content: str) -> list[dict]:
                 if lxp:
                     stage_link_xmlprops.setdefault(partner_id, []).append(lxp)
 
-        # Process CustomStage records
         for stage_rec in records_by_type.get("CustomStage", []):
             stage_id   = stage_rec.get("Identifier", "")
             stage_name = get_property(stage_rec, "Name") or stage_id
             stage_type = get_property(stage_rec, "StageType")
 
-            # Get XMLProperties
             xml_props_str = get_property(stage_rec, "XMLProperties")
             if not xml_props_str:
                 xml_props_str = get_subrecord_value(stage_rec, "XMLProperties")
 
             link_xml_props = stage_link_xmlprops.get(stage_id, [])
 
-            # Filter: must contain both required strings
             combined_text = f"{stage_type} {xml_props_str} {' '.join(link_xml_props)}"
             if not all(s in combined_text for s in REQUIRED_STRINGS):
                 continue
@@ -413,19 +397,20 @@ def process_file(file_path: str, raw_content: str) -> list[dict]:
                     if sql:
                         break
 
-            # ── DIAGNOSTIC: show what SQL was extracted ───────────────────────
-            sql_preview = sql[:120].replace('\n', ' ') if sql else "(no SQL found)"
-            print(f"         Stage: {stage_name}")
-            print(f"         SQL  : {sql_preview}...")
+            # ── DIAGNOSTIC ───────────────────────────────────────────────────
+            diag(f"    Stage: {stage_name}  (type: {stage_type})")
+            diag(f"    SQL extracted ({len(sql)} chars):")
+            # Show first 300 chars of SQL with special chars visible
+            sql_show = repr(sql[:300])
+            diag(f"      {sql_show}")
 
-            # Parse View Name + View Columns from the SQL
+            # Parse views and columns from SQL
             view_name, view_columns = parse_views_and_columns_from_sql(sql)
+            diag(f"    View Name: {view_name or '(empty)'}")
+            diag(f"    Columns:   {view_columns[:8]}{'...' if len(view_columns) > 8 else ''}")
+            diag("")
 
-            print(f"         Views: {view_name or '(none)'}")
-            print(f"         Cols : {view_columns[:5]}{'...' if len(view_columns) > 5 else ''}")
-            print()
-
-            # Build rows
+            # Build rows — first row has all fields, rest only View Column
             if view_columns:
                 rows.append({
                     "Job/Sequence Name": job_name,
@@ -455,14 +440,123 @@ def process_file(file_path: str, raw_content: str) -> list[dict]:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+#  Write Excel with merged cells
+# ═════════════════════════════════════════════════════════════════════════════
+
+def write_excel(all_rows: list[dict], output_path: str):
+    """Write output as .xlsx with merged & centered cells for readability."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "datastage_output"
+
+    # Styles
+    header_font = Font(name="Arial", bold=True, size=11, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="4472C4")
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    data_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    thin_border = Border(
+        left=Side(style="thin"),
+        right=Side(style="thin"),
+        top=Side(style="thin"),
+        bottom=Side(style="thin"),
+    )
+
+    # Write header row
+    for col_idx, header in enumerate(CSV_HEADERS, 1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
+        cell.border = thin_border
+
+    # Identify stage groups: consecutive rows belonging to same stage
+    # A group starts at a row where Job/Sequence Name is non-empty
+    groups: list[tuple[int, int]] = []   # (start_data_idx, count)
+    i = 0
+    while i < len(all_rows):
+        count = 1
+        while (i + count < len(all_rows)
+               and all_rows[i + count]["Job/Sequence Name"] == ""):
+            count += 1
+        groups.append((i, count))
+        i += count
+
+    # Write data and merge
+    excel_row = 2  # start after header
+    for start_idx, count in groups:
+        first_row_data = all_rows[start_idx]
+
+        for offset in range(count):
+            r = excel_row + offset
+            row_data = all_rows[start_idx + offset]
+
+            # View Column goes in every row
+            cell = ws.cell(row=r, column=5, value=row_data["View Column"])
+            cell.alignment = data_align
+            cell.border = thin_border
+
+        # Write main fields in the first row of the group
+        ws.cell(row=excel_row, column=1, value=first_row_data["Job/Sequence Name"])
+        ws.cell(row=excel_row, column=2, value=first_row_data["Stage Name"])
+        ws.cell(row=excel_row, column=3, value=first_row_data["SQL Query"])
+        ws.cell(row=excel_row, column=4, value=first_row_data["View Name"])
+
+        # Style the main field cells
+        for col in range(1, 5):
+            cell = ws.cell(row=excel_row, column=col)
+            cell.alignment = Alignment(
+                horizontal="left", vertical="center", wrap_text=True
+            )
+            cell.border = thin_border
+
+        # Merge cells for columns 1-4 if group has multiple rows
+        if count > 1:
+            for col in range(1, 5):
+                ws.merge_cells(
+                    start_row=excel_row,
+                    start_column=col,
+                    end_row=excel_row + count - 1,
+                    end_column=col,
+                )
+                # Re-apply alignment after merge (openpyxl quirk)
+                cell = ws.cell(row=excel_row, column=col)
+                cell.alignment = Alignment(
+                    horizontal="left", vertical="center", wrap_text=True
+                )
+
+            # Apply borders to all cells in the merged range
+            for offset in range(count):
+                for col in range(1, 6):
+                    ws.cell(row=excel_row + offset, column=col).border = thin_border
+
+        excel_row += count
+
+    # Column widths
+    ws.column_dimensions["A"].width = 28
+    ws.column_dimensions["B"].width = 30
+    ws.column_dimensions["C"].width = 60
+    ws.column_dimensions["D"].width = 40
+    ws.column_dimensions["E"].width = 25
+
+    # Freeze top row
+    ws.freeze_panes = "A2"
+
+    wb.save(output_path)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 #  Main
 # ═════════════════════════════════════════════════════════════════════════════
 
 def main():
     input_folder = Path(INPUT_FOLDER).resolve()
     if not input_folder.exists():
-        print(f"[ERROR] Input folder not found: {input_folder}")
-        print("        Update INPUT_FOLDER at the top of this script.")
+        diag(f"[ERROR] Input folder not found: {input_folder}")
+        diag("        Update INPUT_FOLDER at the top of this script.")
         return
 
     xml_files = sorted(set(
@@ -471,10 +565,10 @@ def main():
     ))
 
     if not xml_files:
-        print(f"[WARN] No XML files found in: {input_folder}")
+        diag(f"[WARN] No XML files found in: {input_folder}")
         return
 
-    print(f"Found {len(xml_files)} XML file(s). Checking for required strings …\n")
+    diag(f"Found {len(xml_files)} XML file(s). Checking for required strings …\n")
 
     all_rows:        list[dict] = []
     skipped_count:   int = 0
@@ -485,25 +579,39 @@ def main():
         content = read_file_if_meets_criteria(fp)
 
         if content is None:
-            print(f"  [SKIP] {fname}  ← missing required strings")
+            diag(f"  [SKIP] {fname}")
             skipped_count += 1
             continue
 
-        print(f"  [OK]   {fname}")
+        diag(f"  [OK]   {fname}")
         file_rows = process_file(fp, content)
         all_rows.extend(file_rows)
         processed_count += 1
 
-    print(f"\nProcessed: {processed_count}  |  Skipped: {skipped_count}")
-    print(f"Total rows extracted: {len(all_rows)}")
+    diag(f"\nProcessed: {processed_count}  |  Skipped: {skipped_count}")
+    diag(f"Total rows extracted: {len(all_rows)}")
 
-    output_path = Path(OUTPUT_CSV).resolve()
-    with output_path.open("w", newline="", encoding="utf-8") as f:
+    # Write CSV
+    csv_path = Path(OUTPUT_CSV).resolve()
+    with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
         writer.writeheader()
         writer.writerows(all_rows)
+    diag(f"\nCSV written to: {csv_path}")
 
-    print(f"\nCSV written to: {output_path}")
+    # Write Excel with merged cells
+    xlsx_path = Path(OUTPUT_XLSX).resolve()
+    try:
+        write_excel(all_rows, str(xlsx_path))
+        diag(f"Excel written to: {xlsx_path}")
+    except ImportError:
+        diag("[WARN] openpyxl not installed — run: pip install openpyxl")
+        diag("       Only CSV was produced.")
+
+    # Write diagnostic log
+    log_path = Path(DIAG_LOG).resolve()
+    log_path.write_text("\n".join(diag_lines), encoding="utf-8")
+    diag(f"Diagnostic log: {log_path}")
 
 
 if __name__ == "__main__":
