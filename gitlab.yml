@@ -235,8 +235,6 @@ def parse_views_and_columns_from_sql(sql: str) -> tuple[str, list[str]]:
             seen_tables.add(key)
             tables.append(clean)
 
-    view_name_str = "; ".join(tables)
-
     # ── Column names from SELECT … FROM ──────────────────────────────────────
     select_match = re.search(
         r"\bSELECT\s+(.*?)\s+FROM\b",
@@ -270,7 +268,7 @@ def parse_views_and_columns_from_sql(sql: str) -> tuple[str, list[str]]:
         if col:
             clean_cols.append(col)
 
-    return (view_name_str, clean_cols)
+    return (tables, clean_cols)
 
 
 def _clean_column_expr(expr: str) -> str:
@@ -413,35 +411,22 @@ def process_file(file_path: str, raw_content: str) -> list[dict]:
             diag(f"      {sql_show}")
 
             # Parse views and columns from SQL
-            view_name, view_columns = parse_views_and_columns_from_sql(sql)
-            diag(f"    View Name: {view_name or '(empty)'}")
+            view_names, view_columns = parse_views_and_columns_from_sql(sql)
+            diag(f"    Views:     {view_names[:5]}{'...' if len(view_names) > 5 else ''}")
             diag(f"    Columns:   {view_columns[:8]}{'...' if len(view_columns) > 8 else ''}")
             diag("")
 
-            # Build rows — first row has all fields, rest only View Column
-            if view_columns:
+            # Build rows — views and columns fill parallel rows
+            # Row count = max(len(views), len(columns)), minimum 1
+            n_rows = max(len(view_names), len(view_columns), 1)
+
+            for i in range(n_rows):
                 rows.append({
-                    "Job/Sequence Name": job_name,
-                    "Stage Name":        stage_name,
-                    "SQL Query":         sql,
-                    "View Name":         view_name,
-                    "View Column":       view_columns[0],
-                })
-                for col in view_columns[1:]:
-                    rows.append({
-                        "Job/Sequence Name": "",
-                        "Stage Name":        "",
-                        "SQL Query":         "",
-                        "View Name":         "",
-                        "View Column":       col,
-                    })
-            else:
-                rows.append({
-                    "Job/Sequence Name": job_name,
-                    "Stage Name":        stage_name,
-                    "SQL Query":         sql,
-                    "View Name":         view_name,
-                    "View Column":       "",
+                    "Job/Sequence Name": job_name if i == 0 else "",
+                    "Stage Name":        stage_name if i == 0 else "",
+                    "SQL Query":         sql if i == 0 else "",
+                    "View Name":         view_names[i] if i < len(view_names) else "",
+                    "View Column":       view_columns[i] if i < len(view_columns) else "",
                 })
 
     return rows
@@ -502,35 +487,38 @@ def write_excel(all_rows: list[dict], output_path: str):
             r = excel_row + offset
             row_data = all_rows[start_idx + offset]
 
-            # View Column goes in every row
+            # View Name — one per row (col 4)
+            cell = ws.cell(row=r, column=4, value=row_data["View Name"])
+            cell.alignment = data_align
+            cell.border = thin_border
+
+            # View Column — one per row (col 5)
             cell = ws.cell(row=r, column=5, value=row_data["View Column"])
             cell.alignment = data_align
             cell.border = thin_border
 
-        # Write main fields in the first row of the group
+        # Write main fields (Job, Stage, SQL) in the first row of the group
         ws.cell(row=excel_row, column=1, value=first_row_data["Job/Sequence Name"])
         ws.cell(row=excel_row, column=2, value=first_row_data["Stage Name"])
         ws.cell(row=excel_row, column=3, value=first_row_data["SQL Query"])
-        ws.cell(row=excel_row, column=4, value=first_row_data["View Name"])
 
-        # Style the main field cells
-        for col in range(1, 5):
+        # Style columns A-C
+        for col in range(1, 4):
             cell = ws.cell(row=excel_row, column=col)
             cell.alignment = Alignment(
                 horizontal="left", vertical="center", wrap_text=True
             )
             cell.border = thin_border
 
-        # Merge cells for columns 1-4 if group has multiple rows
+        # Merge cells for columns A-C (Job, Stage, SQL) only
         if count > 1:
-            for col in range(1, 5):
+            for col in range(1, 4):  # columns 1, 2, 3 only
                 ws.merge_cells(
                     start_row=excel_row,
                     start_column=col,
                     end_row=excel_row + count - 1,
                     end_column=col,
                 )
-                # Re-apply alignment after merge (openpyxl quirk)
                 cell = ws.cell(row=excel_row, column=col)
                 cell.alignment = Alignment(
                     horizontal="left", vertical="center", wrap_text=True
