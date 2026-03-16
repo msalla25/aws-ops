@@ -1,613 +1,710 @@
 """
-DataStage XML Parser
-─────────────────────
-Reads DataStage XML export files (<DSExport> root) from a folder and
-outputs an Excel file (.xlsx) with merged cells for readability.
+DataStage View-to-Base-Table Column Mapper
+───────────────────────────────────────────
+Takes the CSV output from the DataStage XML parser and enriches it with
+two additional columns:
+  - Base Table Name   : the underlying table the view column comes from
+  - Base Column Name  : the actual column name in the base table
 
-View Name and View Column are extracted from the SQL query text itself.
+It does this by parsing CREATE VIEW DDL statements from a master
+spreadsheet to build a mapping of view_name.column → base_table.column.
+
+Usage:
+  1. Update the 3 file paths below
+  2. Run:  python3 datastage_ddl_mapper.py
+
+Master DDL spreadsheet format (from DBMS_METADATA.GET_DDL):
+  - Column A contains the full DDL text per row, one view per row
+  - Example:
+      CREATE OR REPLACE FORCE EDITIONABLE VIEW IODS.ADDR_RV
+      (ADDR_ID, ADDR_LINE1, ...) AS
+      SELECT t1.ADDR_ID, t1.ADDR_LINE1, ...
+      FROM IODS.ADDRESS t1
+      JOIN IODS.CUSTOMER t2 ON ...
 """
 
 import csv
 import re
-import glob
-import html
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional
 
+# ── Try to import openpyxl / pandas for reading Excel; fall back to csv ──────
+try:
+    from openpyxl import load_workbook
+    HAS_OPENPYXL = True
+except ImportError:
+    HAS_OPENPYXL = False
+
+try:
+    import pandas as pd
+    HAS_PANDAS = True
+except ImportError:
+    HAS_PANDAS = False
+
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-INPUT_FOLDER  = "./datastage_jobs"
-OUTPUT_XLSX   = "./datastage_output.xlsx"
-OUTPUT_CSV    = "./datastage_output.csv"       # also produce CSV as backup
-DIAG_LOG      = "./datastage_diagnostic.log"   # diagnostic log
+PARSER_CSV       = "./datastage_output.csv"          # Output from the XML parser
+MASTER_DDL_FILE  = "./master_ddl.xlsx"               # Master DDL spreadsheet (.xlsx or .csv)
+MASTER_DDL_SHEET = "Export Worksheet"                 # Sheet name (ignored if .csv)
+OUTPUT_CSV       = "./datastage_output_enriched.csv"
+OUTPUT_XLSX      = "./datastage_output_enriched.xlsx"
 
-REQUIRED_STRINGS = ["OracleConnectorPX", "ORA_IODS_SCHEMA"]
-
-CSV_HEADERS = [
-    "Job/Sequence Name",
-    "Stage Name",
-    "SQL Query",
-    "View Name",
-    "View Column",
-]
+# The view names in the parser CSV use DataStage parameter syntax:
+#   #$ORA_IODS_SCHEMA#.iods_ast_v
+# The DDLs use the actual schema name:
+#   IODS.IODS_AST_V  or  IODS.IODS_AST_RV
+# This mapping strips the DS parameter prefix for matching.
+# Add entries here if your DS parameters map to specific Oracle schemas:
+DS_PARAM_TO_SCHEMA = {
+    "ORA_IODS_SCHEMA": "IODS",
+    "ORA_ALFA_ODS_SCHEMA": "IODS",
+    # Add more as needed
+}
 # ──────────────────────────────────────────────────────────────────────────────
 
-diag_lines: list[str] = []   # collects diagnostic output
 
-def diag(msg: str):
-    print(msg)
-    diag_lines.append(msg)
+# ═════════════════════════════════════════════════════════════════════════════
+#  Read master DDL file
+# ═════════════════════════════════════════════════════════════════════════════
+
+def read_master_ddls(file_path: str, sheet_name: str = "Export Worksheet") -> list[str]:
+    """
+    Read the master DDL file.  Returns a list of DDL strings (one per view).
+    Supports .xlsx, .xls, and .csv files.
+    Column A of each row contains the full DDL text.
+    """
+    path = Path(file_path)
+    ddls: list[str] = []
+
+    if path.suffix.lower() in (".xlsx", ".xls"):
+        if HAS_OPENPYXL:
+            wb = load_workbook(str(path), read_only=True, data_only=True)
+            # Try requested sheet, fall back to first sheet
+            if sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+            else:
+                ws = wb[wb.sheetnames[0]]
+                print(f"  [INFO] Sheet '{sheet_name}' not found, using '{wb.sheetnames[0]}'")
+
+            for row in ws.iter_rows(min_row=1, max_col=1, values_only=True):
+                cell_val = row[0]
+                if cell_val and isinstance(cell_val, str):
+                    text = cell_val.strip()
+                    if text.upper().startswith("CREATE"):
+                        ddls.append(text)
+            wb.close()
+        elif HAS_PANDAS:
+            df = pd.read_excel(str(path), sheet_name=sheet_name, header=None, dtype=str)
+            for val in df.iloc[:, 0].dropna():
+                text = str(val).strip()
+                if text.upper().startswith("CREATE"):
+                    ddls.append(text)
+        else:
+            print("[ERROR] Install openpyxl or pandas to read .xlsx files:")
+            print("        pip install openpyxl")
+            return []
+    elif path.suffix.lower() == ".csv":
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if row and row[0].strip().upper().startswith("CREATE"):
+                    ddls.append(row[0].strip())
+    else:
+        # Try reading as plain text (one DDL per line, or separated by semicolons)
+        content = path.read_text(encoding="utf-8", errors="replace")
+        # Split on semicolons or on CREATE keywords
+        parts = re.split(r";\s*(?=CREATE)", content, flags=re.IGNORECASE)
+        for part in parts:
+            text = part.strip().rstrip(";").strip()
+            if text.upper().startswith("CREATE"):
+                ddls.append(text)
+
+    print(f"  Read {len(ddls)} CREATE VIEW DDL(s) from {path.name}")
+    return ddls
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  XML navigation helpers
+#  Parse a single CREATE VIEW DDL
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _strip_ns(tag: str) -> str:
-    return tag.split("}")[-1] if "}" in tag else tag
+def parse_create_view_ddl(ddl: str) -> Optional[dict]:
+    """
+    Parse a CREATE VIEW DDL and extract:
+      - view_schema, view_name
+      - For each view column: the base table and base column it maps to
 
+    Returns:
+      {
+        "view_schema": "IODS",
+        "view_name": "ADDR_RV",
+        "view_fqn": "IODS.ADDR_RV",
+        "columns": {
+            "ADDR_ID":    {"base_table": "IODS.ADDRESS", "base_column": "ADDR_ID"},
+            "ADDR_LINE1": {"base_table": "IODS.ADDRESS", "base_column": "ADDR_LINE1"},
+            ...
+        }
+      }
+    or None if parsing fails.
 
-def get_property(record_el: ET.Element, prop_name: str) -> str:
-    for prop in record_el:
-        if _strip_ns(prop.tag) == "Property" and prop.get("Name") == prop_name:
-            return (prop.text or "").strip()
-    return ""
+    DDL format:
+      CREATE OR REPLACE [FORCE] [EDITIONABLE|EDITIONING] VIEW schema.view_name
+      (col1, col2, col3, ...) AS
+      SELECT expr1, expr2, expr3, ...
+      FROM schema.table1 alias1
+      [JOIN schema.table2 alias2 ON ...]
+      [WHERE ...]
+    """
 
-
-def get_subrecord_value(record_el: ET.Element, sr_prop_name: str) -> str:
-    for collection in record_el.iter():
-        if _strip_ns(collection.tag) != "Collection":
-            continue
-        for sub in collection:
-            if _strip_ns(sub.tag) != "SubRecord":
-                continue
-            name_val = ""
-            value_val = ""
-            for prop in sub:
-                if _strip_ns(prop.tag) != "Property":
-                    continue
-                pname = prop.get("Name", "")
-                ptext = (prop.text or "").strip()
-                if pname == "Name":
-                    name_val = ptext
-                elif pname == "Value":
-                    value_val = ptext
-            if name_val == sr_prop_name:
-                return value_val
-    return ""
-
-
-def get_stage_identifier_for_link(link_rec: ET.Element) -> str:
-    partner = get_property(link_rec, "Partner")
-    if partner:
-        return partner
-    rec_id = link_rec.get("Identifier", "")
-    m = re.match(r"^(.+?)P\d+$", rec_id)
-    return m.group(1) if m else ""
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  Extract SQL from the XMLProperties embedded XML string
-# ═════════════════════════════════════════════════════════════════════════════
-
-def _fully_unescape(text: str) -> str:
-    prev = None
-    current = text
-    for _ in range(5):
-        prev = current
-        current = html.unescape(current)
-        if current == prev:
-            break
-    return current
-
-
-def _get_full_text(el: ET.Element) -> str:
-    """Get ALL text from an element including text in children (itertext).
-    This handles cases where el.text only has partial content."""
-    return "".join(el.itertext()).strip()
-
-
-def extract_sql_from_xmlprops(xml_props_str: str) -> str:
-    """Extract the SQL query from the XMLProperties embedded XML string."""
-    if not xml_props_str:
-        return ""
-
-    raw  = xml_props_str.strip()
-    text = _fully_unescape(raw)
-
-    sql = ""
-
-    # Strategy 1: XML parse — use itertext() to get ALL text from elements
-    try:
-        clean = re.sub(r"<\?xml[^?]*\?>", "", text).strip()
-        if not clean.startswith("<"):
-            clean = f"<root>{clean}</root>"
-        inner_root = ET.fromstring(clean)
-
-        for el in inner_root.iter():
-            tag_lower = _strip_ns(el.tag).lower()
-
-            if tag_lower in ("selectstatement", "userquery", "query", "insertstatement"):
-                # Use itertext to get ALL text, not just el.text
-                full_text = _get_full_text(el)
-                # Also try el.text directly
-                el_text = (el.text or "").strip()
-
-                # Pick whichever is longer (more complete)
-                candidate = full_text if len(full_text) >= len(el_text) else el_text
-
-                # Strip leftover CDATA markers
-                candidate = re.sub(r"<!\[CDATA\[", "", candidate)
-                candidate = re.sub(r"\]\]>", "", candidate)
-                candidate = candidate.strip()
-
-                if candidate and len(candidate) > len(sql):
-                    sql = candidate
-    except ET.ParseError:
-        pass
-
-    if sql:
-        return sql
-
-    # Strategy 2: regex — try many patterns on both unescaped and raw text
-    for source in (text, raw):
-        for pattern in [
-            r"<SelectStatement[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</SelectStatement>",
-            r"<UserQuery[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</UserQuery>",
-            r"<Query[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</Query>",
-            r"<InsertStatement[^>]*>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</InsertStatement>",
-        ]:
-            m = re.search(pattern, source, re.IGNORECASE | re.DOTALL)
-            if m and m.group(1).strip():
-                return m.group(1).strip()
-
-    # Strategy 3: escaped entity form
-    for tag in ("SelectStatement", "UserQuery", "Query", "InsertStatement"):
-        for pattern in [
-            rf"&lt;{tag}[^&]*&gt;\s*&lt;!\[CDATA\[(.*?)\]\]&gt;\s*&lt;/{tag}&gt;",
-            rf"&lt;{tag}[^&]*&gt;(.*?)&lt;/{tag}&gt;",
-        ]:
-            m = re.search(pattern, raw, re.IGNORECASE | re.DOTALL)
-            if m and m.group(1).strip():
-                return _fully_unescape(m.group(1).strip())
-
-    # Strategy 4: just find SELECT...FROM anywhere in the blob
-    m = re.search(
-        r"(SELECT\s+.+?\s+FROM\s+\S+.*?)(?=SELECT\s|\Z)",
-        text, re.IGNORECASE | re.DOTALL,
+    # ── Step 1: Extract view name ────────────────────────────────────────────
+    view_match = re.search(
+        r"VIEW\s+"
+        r"(?:\"([^\"]+)\"|([A-Za-z_][\w$#]*))"     # schema (quoted or plain)
+        r"\s*\.\s*"
+        r"(?:\"([^\"]+)\"|([A-Za-z_][\w$#]*))",     # view name
+        ddl, re.IGNORECASE,
     )
-    if m:
-        return m.group(1).strip()
+    if not view_match:
+        # Try without schema
+        view_match = re.search(
+            r"VIEW\s+(?:\"([^\"]+)\"|([A-Za-z_][\w$#]*))\s*\(",
+            ddl, re.IGNORECASE,
+        )
+        if not view_match:
+            return None
+        view_schema = ""
+        view_name = (view_match.group(1) or view_match.group(2)).upper()
+    else:
+        view_schema = (view_match.group(1) or view_match.group(2) or "").upper()
+        view_name = (view_match.group(3) or view_match.group(4) or "").upper()
 
-    return ""
+    view_fqn = f"{view_schema}.{view_name}" if view_schema else view_name
 
+    # ── Step 2: Extract view column list from parentheses after view name ────
+    # Find: VIEW schema.name (COL1, COL2, ...) AS
+    col_list_match = re.search(
+        r"VIEW\s+[^\(]+\(\s*(.*?)\s*\)\s*AS\b",
+        ddl, re.IGNORECASE | re.DOTALL,
+    )
+    view_columns: list[str] = []
+    if col_list_match:
+        col_block = col_list_match.group(1)
+        # Split on commas, strip quotes and whitespace
+        for c in col_block.split(","):
+            col = c.strip().strip('"').strip()
+            if col:
+                view_columns.append(col.upper())
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  Parse View Name + View Column from the SQL query text
-# ═════════════════════════════════════════════════════════════════════════════
+    # ── Step 3: Extract SELECT expressions ───────────────────────────────────
+    as_match = re.search(r"\)\s*AS\s+", ddl, re.IGNORECASE)
+    if not as_match:
+        # Try: AS SELECT (no parenthesized column list)
+        as_match = re.search(r"\bAS\s+(?=SELECT\b)", ddl, re.IGNORECASE)
+    if not as_match:
+        return {
+            "view_schema": view_schema,
+            "view_name": view_name,
+            "view_fqn": view_fqn,
+            "columns": {},
+        }
 
-def parse_views_and_columns_from_sql(sql: str) -> tuple[str, list[str]]:
-    """
-    Extract view/table names from FROM/JOIN and column names from SELECT.
-    Returns (view_name_str, [col1, col2, ...])
-    """
-    if not sql:
-        return ("", [])
+    select_part = ddl[as_match.end():].strip()
 
-    # Normalize: replace literal escape sequences and collapse whitespace
-    norm = sql.replace("\\n", " ").replace("\\r", " ").replace("\\t", " ")
-    # Strip SQL single-line comments (-- to end of line)
-    norm = re.sub(r"--[^\n]*", " ", norm)
-    # Strip SQL block comments (/* ... */)
-    norm = re.sub(r"/\*.*?\*/", " ", norm, flags=re.DOTALL)
-    norm = re.sub(r"\s+", " ", norm)
+    # Extract the SELECT ... FROM portion
+    # Handle nested subqueries by finding the main FROM
+    select_exprs_match = re.search(
+        r"SELECT\s+(.*?)\s+FROM\b",
+        select_part, re.IGNORECASE | re.DOTALL,
+    )
+    if not select_exprs_match:
+        return {
+            "view_schema": view_schema,
+            "view_name": view_name,
+            "view_fqn": view_fqn,
+            "columns": {},
+        }
 
-    # ── View / table names from FROM and JOIN ────────────────────────────────
-    # Handles:
-    #   SCHEMA.VIEW                            — plain names
-    #   "SCHEMA"."VIEW"                        — quoted identifiers
-    #   #$ORA_IODS_SCHEMA#.iods_ast_v          — DataStage parameter markers
-    #   SCHEMA.VIEW@DBLINK                     — Oracle DB links
-    #   ( subquery ) alias                     — skipped (starts with parenthesis)
-    #
-    # A "name part" is one of:
-    #   - A DS parameter:   #$PARAM_NAME#
-    #   - A quoted ident:   "something"
-    #   - A regular ident:  letter_or_underscore followed by word chars
-    _NAME_PART = r'(?:#\$[\w]+#|"[^"]+"|[A-Za-z_][\w$#]*)'
+    select_block = select_exprs_match.group(1).strip()
+    select_block = re.sub(r"^(DISTINCT|ALL|UNIQUE)\s+", "", select_block, flags=re.IGNORECASE)
 
-    from_pattern = re.compile(
+    # Split SELECT expressions on commas (respecting parenthesis depth)
+    select_exprs: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for ch in select_block:
+        if ch == "(":
+            depth += 1
+            current.append(ch)
+        elif ch == ")":
+            depth -= 1
+            current.append(ch)
+        elif ch == "," and depth == 0:
+            select_exprs.append("".join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+    if current:
+        select_exprs.append("".join(current).strip())
+
+    # ── Step 4: Extract FROM/JOIN table aliases ──────────────────────────────
+    from_part = select_part[select_exprs_match.end():]
+    # Include the "FROM" keyword for parsing
+    from_part = "FROM " + from_part
+
+    alias_to_table: dict[str, str] = {}   # alias (upper) → full table name
+
+    alias_pattern = re.compile(
         r"(?:FROM|JOIN)\s+"
-        r"(" + _NAME_PART + r"(?:\s*\.\s*" + _NAME_PART + r"){0,2}"
-        r"(?:@[A-Za-z_][\w$#]*)?"     # optional @dblink
-        r")",
+        r"("
+            r"(?:\"[^\"]+\"|[A-Za-z_][\w$#]*)"
+            r"(?:\s*\.\s*(?:\"[^\"]+\"|[A-Za-z_][\w$#]*))*"
+        r")"
+        r"(?:\s+(?:AS\s+)?([A-Za-z_][\w$#]*))?",
         re.IGNORECASE,
     )
+    first_table = None
+    for m in alias_pattern.finditer(from_part):
+        table_name = re.sub(r"\s*\.\s*", ".", m.group(1)).strip().strip('"').upper()
+        alias = (m.group(2) or "").strip().upper()
 
-    seen_tables: set[str] = set()
-    tables: list[str] = []
-    for m in from_pattern.finditer(norm):
-        raw_name = m.group(1).strip()
-        clean = re.sub(r"\s*\.\s*", ".", raw_name)
-        key = clean.upper().replace('"', '')
-        if key not in seen_tables:
-            seen_tables.add(key)
-            tables.append(clean)
-
-    # ── Column names from SELECT … FROM ──────────────────────────────────────
-    select_match = re.search(
-        r"\bSELECT\s+(.*?)\s+FROM\b",
-        norm, re.IGNORECASE | re.DOTALL,
-    )
-    columns: list[str] = []
-    if select_match:
-        col_block = select_match.group(1).strip()
-        col_block = re.sub(r"^(DISTINCT|ALL)\s+", "", col_block, flags=re.IGNORECASE)
-
-        depth = 0
-        current: list[str] = []
-        for ch in col_block:
-            if ch == "(":
-                depth += 1
-                current.append(ch)
-            elif ch == ")":
-                depth -= 1
-                current.append(ch)
-            elif ch == "," and depth == 0:
-                columns.append("".join(current).strip())
-                current = []
-            else:
-                current.append(ch)
-        if current:
-            columns.append("".join(current).strip())
-
-    clean_cols: list[str] = []
-    for expr in columns:
-        col = _clean_column_expr(expr)
-        if col:
-            clean_cols.append(col)
-
-    return (tables, clean_cols)
-
-
-def _clean_column_expr(expr: str) -> str:
-    expr = expr.strip()
-    if not expr or expr == "*":
-        return ""
-
-    # Explicit AS alias
-    alias_match = re.search(r"\bAS\s+[\"'`]?(\w+)[\"'`]?\s*$", expr, re.IGNORECASE)
-    if alias_match:
-        return alias_match.group(1)
-
-    # Implicit alias (last token)
-    tokens = expr.split()
-    if len(tokens) >= 2:
-        last = tokens[-1].strip("\"'`")
-        if re.match(r"^[A-Za-z_]\w*$", last) and last.upper() not in (
-            "FROM", "WHERE", "AND", "OR", "ON", "AS", "IN", "NOT", "NULL",
-            "IS", "BETWEEN", "LIKE", "EXISTS", "CASE", "WHEN", "THEN",
-            "ELSE", "END", "SELECT", "DISTINCT", "ALL",
+        # Skip SQL keywords that might be captured as aliases
+        if alias and alias in (
+            "ON", "WHERE", "AND", "OR", "LEFT", "RIGHT", "INNER", "OUTER",
+            "CROSS", "FULL", "NATURAL", "JOIN", "SET", "GROUP", "ORDER",
+            "HAVING", "UNION", "INTERSECT", "MINUS", "EXCEPT",
         ):
-            return last
+            alias = ""
 
-    # Qualified: alias.column → last part
-    qual_match = re.match(r'(?:(?:"[^"]+"|[A-Za-z_][\w$#]*)\s*\.\s*)+([A-Za-z_][\w$#]*)', expr)
+        if first_table is None:
+            first_table = table_name
+
+        if alias:
+            alias_to_table[alias] = table_name
+        else:
+            # Use the table name itself (last part) as implicit alias
+            short = table_name.split(".")[-1].upper()
+            alias_to_table[short] = table_name
+
+    # ── Step 5: Map each SELECT expression to base table + column ────────────
+    columns: dict[str, dict] = {}
+
+    for i, expr in enumerate(select_exprs):
+        expr = expr.strip()
+        if not expr:
+            continue
+
+        # Determine the view column name for this position
+        if i < len(view_columns):
+            v_col = view_columns[i]
+        else:
+            # Infer from expression alias or last identifier
+            v_col = _infer_column_name(expr).upper()
+
+        if not v_col:
+            continue
+
+        # Parse the expression to find base_table.base_column
+        base_table, base_column = _resolve_expr_to_base(
+            expr, alias_to_table, first_table
+        )
+
+        columns[v_col] = {
+            "base_table": base_table,
+            "base_column": base_column,
+        }
+
+    return {
+        "view_schema": view_schema,
+        "view_name": view_name,
+        "view_fqn": view_fqn,
+        "columns": columns,
+    }
+
+
+def _infer_column_name(expr: str) -> str:
+    """Infer the output column name from a SELECT expression."""
+    # Explicit alias: ... AS alias
+    m = re.search(r"\bAS\s+\"?(\w+)\"?\s*$", expr, re.IGNORECASE)
+    if m:
+        return m.group(1)
+
+    # Qualified: alias.column → column
+    m = re.match(r"(?:[\w$.#\"]+\.)+(\w+)\s*$", expr.strip())
+    if m:
+        return m.group(1)
+
+    # Simple identifier
+    m = re.match(r"^(\w+)\s*$", expr.strip())
+    if m:
+        return m.group(1)
+
+    return ""
+
+
+def _resolve_expr_to_base(
+    expr: str,
+    alias_to_table: dict[str, str],
+    first_table: Optional[str],
+) -> tuple[str, str]:
+    """
+    Given a SELECT expression like "t1.ADDR_ID" or "alias.col AS output_col",
+    resolve it to (base_table, base_column).
+    """
+    expr = expr.strip()
+
+    # Strip trailing alias: expr AS alias
+    core = re.sub(r"\s+AS\s+\S+\s*$", "", expr, flags=re.IGNORECASE).strip()
+
+    # Qualified: alias.column  or  schema.table.column
+    qual_match = re.match(
+        r"(?:\"?(\w+)\"?)\s*\.\s*(?:\"?(\w+)\"?)\s*$",
+        core,
+    )
     if qual_match:
-        return qual_match.group(1)
+        qualifier = qual_match.group(1).upper()
+        col_name = qual_match.group(2).upper()
 
-    # Simple name
-    simple = re.match(r"^([A-Za-z_][\w$#]*)$", expr)
-    if simple:
-        return simple.group(1)
+        # Look up the qualifier as an alias
+        if qualifier in alias_to_table:
+            return (alias_to_table[qualifier], col_name)
+        else:
+            # Qualifier might be a table name directly
+            return (qualifier, col_name)
 
-    return expr
+    # Three-part: schema.table.column
+    qual3_match = re.match(
+        r"(?:\"?(\w+)\"?)\s*\.\s*(?:\"?(\w+)\"?)\s*\.\s*(?:\"?(\w+)\"?)\s*$",
+        core,
+    )
+    if qual3_match:
+        schema = qual3_match.group(1).upper()
+        table = qual3_match.group(2).upper()
+        col = qual3_match.group(3).upper()
+        return (f"{schema}.{table}", col)
+
+    # Simple column (no alias prefix) → associate with first table
+    simple_match = re.match(r"^\"?(\w+)\"?\s*$", core)
+    if simple_match:
+        col_name = simple_match.group(1).upper()
+        return (first_table or "", col_name)
+
+    # Complex expression (function call, etc.) → can't resolve base table
+    return ("", core.upper())
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  File-level filtering (single read)
+#  Build the lookup from all DDLs
 # ═════════════════════════════════════════════════════════════════════════════
 
-def read_file_if_meets_criteria(file_path: str) -> Optional[str]:
-    try:
-        content = Path(file_path).read_text(encoding="utf-8", errors="replace")
-        if all(s in content for s in REQUIRED_STRINGS):
-            return content
-        return None
-    except Exception as e:
-        diag(f"  [WARN] Could not read {file_path}: {e}")
-        return None
+def build_view_column_lookup(
+    ddls: list[str],
+) -> dict[str, dict[str, dict]]:
+    """
+    Parse all DDLs and build a lookup:
+      {
+        "VIEW_NAME_UPPER": {
+            "COL_NAME_UPPER": {"base_table": "...", "base_column": "..."},
+            ...
+        },
+        "SCHEMA.VIEW_NAME_UPPER": { ... },   # also keyed by FQN
+      }
+    Multiple keys are registered for flexible matching.
+    """
+    lookup: dict[str, dict[str, dict]] = {}
+    parsed_count = 0
+
+    for ddl in ddls:
+        result = parse_create_view_ddl(ddl)
+        if not result or not result["columns"]:
+            continue
+
+        parsed_count += 1
+        cols = result["columns"]
+
+        # Register under multiple keys for flexible matching
+        keys_to_register = set()
+        keys_to_register.add(result["view_name"])
+        if result["view_fqn"]:
+            keys_to_register.add(result["view_fqn"])
+        # Also without schema prefix
+        short = result["view_name"].split(".")[-1]
+        keys_to_register.add(short)
+
+        for key in keys_to_register:
+            if key:
+                lookup[key.upper()] = cols
+
+    print(f"  Successfully parsed {parsed_count} view DDL(s) into column mappings")
+    return lookup
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  Process a single DataStage XML export file
+#  Normalize a view name from the parser CSV for lookup
 # ═════════════════════════════════════════════════════════════════════════════
 
-def process_file(file_path: str, raw_content: str) -> list[dict]:
-    rows: list[dict] = []
+def normalize_view_name(raw_view_name: str) -> list[str]:
+    """
+    Given a view name from the parser CSV like:
+      #$ORA_IODS_SCHEMA#.iods_ast_v
+    Return a list of possible lookup keys:
+      ["IODS.IODS_AST_V", "IODS_AST_V", "#$ORA_IODS_SCHEMA#.IODS_AST_V"]
+    """
+    if not raw_view_name:
+        return []
 
-    try:
-        root = ET.fromstring(raw_content)
-    except ET.ParseError as e:
-        diag(f"  [ERROR] XML parse failed for {file_path}: {e}")
-        return rows
+    raw = raw_view_name.strip()
+    keys: list[str] = []
 
-    root_tag = _strip_ns(root.tag)
+    # Handle DataStage parameter: #$PARAM#.view_name
+    ds_match = re.match(r"#\$(\w+)#\s*\.\s*(.*)", raw)
+    if ds_match:
+        param_name = ds_match.group(1).upper()
+        view_part = ds_match.group(2).strip().upper()
 
-    jobs: list[ET.Element] = []
-    if root_tag == "DSExport":
-        for child in root:
-            if _strip_ns(child.tag) == "Job":
-                jobs.append(child)
-    elif root_tag == "Job":
-        jobs.append(root)
+        # Try mapping the DS parameter to a real schema
+        if param_name in DS_PARAM_TO_SCHEMA:
+            schema = DS_PARAM_TO_SCHEMA[param_name]
+            keys.append(f"{schema}.{view_part}")
+
+        keys.append(view_part)
+        keys.append(raw.upper())
     else:
-        for el in root.iter():
-            if _strip_ns(el.tag) == "Job":
-                jobs.append(el)
+        # Regular name: SCHEMA.VIEW or just VIEW
+        keys.append(raw.upper())
+        parts = raw.split(".")
+        if len(parts) >= 2:
+            keys.append(parts[-1].upper())  # just the view name
 
-    if not jobs:
-        diag(f"  [WARN] No <Job> elements found in {Path(file_path).name}")
-        return rows
+    return keys
 
-    for job_el in jobs:
-        job_name = job_el.get("Identifier", "")
-        if not job_name:
-            for rec in job_el:
-                if _strip_ns(rec.tag) == "Record" and rec.get("Type") == "JobDefn":
-                    job_name = get_property(rec, "Name")
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Main: enrich the parser CSV
+# ═════════════════════════════════════════════════════════════════════════════
+
+def main():
+    parser_csv_path = Path(PARSER_CSV)
+    master_ddl_path = Path(MASTER_DDL_FILE)
+    output_csv_path = Path(OUTPUT_CSV)
+
+    if not parser_csv_path.exists():
+        print(f"[ERROR] Parser CSV not found: {parser_csv_path}")
+        return
+    if not master_ddl_path.exists():
+        print(f"[ERROR] Master DDL file not found: {master_ddl_path}")
+        return
+
+    # ── Read master DDLs ─────────────────────────────────────────────────────
+    print("Reading master DDL file...")
+    ddls = read_master_ddls(str(master_ddl_path), MASTER_DDL_SHEET)
+    if not ddls:
+        print("[ERROR] No DDLs found in master file")
+        return
+
+    # ── Build lookup ─────────────────────────────────────────────────────────
+    print("Parsing DDLs...")
+    lookup = build_view_column_lookup(ddls)
+    if not lookup:
+        print("[WARN] No column mappings could be parsed from DDLs")
+
+    # ── Read parser CSV and enrich ───────────────────────────────────────────
+    # ── Read parser CSV rows ────────────────────────────────────────────────
+    print(f"Reading parser CSV: {parser_csv_path}")
+    all_input_rows: list[dict] = []
+    with parser_csv_path.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            all_input_rows.append(dict(row))
+
+    # ── Group rows by stage (non-empty Job Name starts a group) ──────────
+    groups: list[list[dict]] = []
+    for row in all_input_rows:
+        if row.get("Job/Sequence Name", "").strip():
+            groups.append([row])
+        elif groups:
+            groups[-1].append(row)
+        else:
+            groups.append([row])
+
+    # ── Enrich each group ────────────────────────────────────────────────
+    enriched_rows: list[dict] = []
+    match_count = 0
+    miss_count = 0
+
+    output_headers = [
+        "Job/Sequence Name",
+        "Stage Name",
+        "SQL Query",
+        "View Name",
+        "View Column",
+        "Base Table Name",
+        "Base Column Name",
+    ]
+
+    for group in groups:
+        # Collect ALL view names in this stage group
+        group_views: list[str] = []
+        for row in group:
+            vn = row.get("View Name", "").strip()
+            if vn:
+                group_views.append(vn)
+
+        # Build a list of all column maps for this group's views
+        group_col_maps: list[dict[str, dict]] = []
+        for vn in group_views:
+            possible_keys = normalize_view_name(vn)
+            for key in possible_keys:
+                if key in lookup:
+                    group_col_maps.append(lookup[key])
                     break
-        if not job_name:
-            job_name = Path(file_path).stem
 
-        records_by_type: dict[str, list[ET.Element]] = {}
-        for rec in job_el:
-            if _strip_ns(rec.tag) != "Record":
-                continue
-            rec_type = rec.get("Type", "")
-            records_by_type.setdefault(rec_type, []).append(rec)
+        # Enrich each row
+        for row in group:
+            view_column = row.get("View Column", "").strip()
+            base_table = ""
+            base_column = ""
 
-        stage_link_xmlprops: dict[str, list[str]] = {}
-        for link_type in ("CustomOutput", "CustomInput"):
-            for rec in records_by_type.get(link_type, []):
-                partner_id = get_stage_identifier_for_link(rec)
-                if not partner_id:
-                    continue
-                lxp = get_property(rec, "XMLProperties")
-                if not lxp:
-                    lxp = get_subrecord_value(rec, "XMLProperties")
-                if lxp:
-                    stage_link_xmlprops.setdefault(partner_id, []).append(lxp)
+            if view_column:
+                col_upper = view_column.upper()
 
-        for stage_rec in records_by_type.get("CustomStage", []):
-            stage_id   = stage_rec.get("Identifier", "")
-            stage_name = get_property(stage_rec, "Name") or stage_id
-            stage_type = get_property(stage_rec, "StageType")
+                # First try: the view on the same row
+                vn = row.get("View Name", "").strip()
+                if vn:
+                    possible_keys = normalize_view_name(vn)
+                    for key in possible_keys:
+                        if key in lookup and col_upper in lookup[key]:
+                            base_table = lookup[key][col_upper]["base_table"]
+                            base_column = lookup[key][col_upper]["base_column"]
+                            break
 
-            xml_props_str = get_property(stage_rec, "XMLProperties")
-            if not xml_props_str:
-                xml_props_str = get_subrecord_value(stage_rec, "XMLProperties")
+                # Second try: search ALL views in this stage group
+                if not base_table:
+                    for col_map in group_col_maps:
+                        if col_upper in col_map:
+                            base_table = col_map[col_upper]["base_table"]
+                            base_column = col_map[col_upper]["base_column"]
+                            break
 
-            link_xml_props = stage_link_xmlprops.get(stage_id, [])
+                if base_table:
+                    match_count += 1
+                elif view_column:
+                    miss_count += 1
 
-            combined_text = f"{stage_type} {xml_props_str} {' '.join(link_xml_props)}"
-            if not all(s in combined_text for s in REQUIRED_STRINGS):
-                continue
+            enriched_rows.append({
+                "Job/Sequence Name": row.get("Job/Sequence Name", ""),
+                "Stage Name":        row.get("Stage Name", ""),
+                "SQL Query":         row.get("SQL Query", ""),
+                "View Name":         row.get("View Name", ""),
+                "View Column":       view_column,
+                "Base Table Name":   base_table,
+                "Base Column Name":  base_column,
+            })
 
-            # Extract SQL
-            sql = extract_sql_from_xmlprops(xml_props_str)
-            if not sql:
-                for lxp in link_xml_props:
-                    sql = extract_sql_from_xmlprops(lxp)
-                    if sql:
-                        break
+    print(f"\nMapping results:")
+    print(f"  Matched:   {match_count}")
+    print(f"  Unmatched: {miss_count}")
+    print(f"  Total rows: {len(enriched_rows)}")
 
-            # ── DIAGNOSTIC ───────────────────────────────────────────────────
-            diag(f"    Stage: {stage_name}  (type: {stage_type})")
-            diag(f"    SQL extracted ({len(sql)} chars):")
-            # Show first 300 chars of SQL with special chars visible
-            sql_show = repr(sql[:300])
-            diag(f"      {sql_show}")
+    # ── Write enriched CSV ───────────────────────────────────────────────────
+    with output_csv_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=output_headers)
+        writer.writeheader()
+        writer.writerows(enriched_rows)
+    print(f"\nEnriched CSV written to: {output_csv_path}")
 
-            # Parse views and columns from SQL
-            view_names, view_columns = parse_views_and_columns_from_sql(sql)
-            diag(f"    Views:     {view_names[:5]}{'...' if len(view_names) > 5 else ''}")
-            diag(f"    Columns:   {view_columns[:8]}{'...' if len(view_columns) > 8 else ''}")
-            diag("")
-
-            # Build rows — views and columns fill parallel rows
-            # Row count = max(len(views), len(columns)), minimum 1
-            n_rows = max(len(view_names), len(view_columns), 1)
-
-            for i in range(n_rows):
-                rows.append({
-                    "Job/Sequence Name": job_name if i == 0 else "",
-                    "Stage Name":        stage_name if i == 0 else "",
-                    "SQL Query":         sql if i == 0 else "",
-                    "View Name":         view_names[i] if i < len(view_names) else "",
-                    "View Column":       view_columns[i] if i < len(view_columns) else "",
-                })
-
-    return rows
+    # ── Write enriched Excel with merged cells ───────────────────────────────
+    try:
+        _write_enriched_excel(enriched_rows, output_headers, str(OUTPUT_XLSX))
+        print(f"Enriched Excel written to: {OUTPUT_XLSX}")
+    except ImportError:
+        print("[INFO] Install openpyxl for Excel output: pip install openpyxl")
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  Write Excel with merged cells
-# ═════════════════════════════════════════════════════════════════════════════
-
-def write_excel(all_rows: list[dict], output_path: str):
-    """Write output as .xlsx with merged & centered cells for readability."""
+def _write_enriched_excel(rows: list[dict], headers: list[str], output_path: str):
+    """Write enriched output as .xlsx with merged cells for Job/Stage/SQL."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "datastage_output"
+    ws.title = "enriched_output"
 
-    # Styles
     header_font = Font(name="Arial", bold=True, size=11, color="FFFFFF")
     header_fill = PatternFill("solid", fgColor="4472C4")
     header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
     data_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
-    center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
     thin_border = Border(
-        left=Side(style="thin"),
-        right=Side(style="thin"),
-        top=Side(style="thin"),
-        bottom=Side(style="thin"),
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
     )
 
-    # Write header row
-    for col_idx, header in enumerate(CSV_HEADERS, 1):
+    for col_idx, header in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col_idx, value=header)
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = header_align
         cell.border = thin_border
 
-    # Identify stage groups: consecutive rows belonging to same stage
-    # A group starts at a row where Job/Sequence Name is non-empty
-    groups: list[tuple[int, int]] = []   # (start_data_idx, count)
+    # Identify groups (consecutive rows for same stage)
+    groups: list[tuple[int, int]] = []
     i = 0
-    while i < len(all_rows):
+    while i < len(rows):
         count = 1
-        while (i + count < len(all_rows)
-               and all_rows[i + count]["Job/Sequence Name"] == ""):
+        while (i + count < len(rows)
+               and rows[i + count]["Job/Sequence Name"] == ""):
             count += 1
         groups.append((i, count))
         i += count
 
-    # Write data and merge
-    excel_row = 2  # start after header
+    excel_row = 2
     for start_idx, count in groups:
-        first_row_data = all_rows[start_idx]
+        first = rows[start_idx]
 
         for offset in range(count):
             r = excel_row + offset
-            row_data = all_rows[start_idx + offset]
+            row_data = rows[start_idx + offset]
 
-            # View Name — one per row (col 4)
-            cell = ws.cell(row=r, column=4, value=row_data["View Name"])
-            cell.alignment = data_align
-            cell.border = thin_border
+            # Columns D-G: one value per row
+            for col_idx, field in [(4, "View Name"), (5, "View Column"),
+                                    (6, "Base Table Name"), (7, "Base Column Name")]:
+                cell = ws.cell(row=r, column=col_idx, value=row_data[field])
+                cell.alignment = data_align
+                cell.border = thin_border
 
-            # View Column — one per row (col 5)
-            cell = ws.cell(row=r, column=5, value=row_data["View Column"])
-            cell.alignment = data_align
-            cell.border = thin_border
+        # Columns A-C: write in first row, merge if multiple rows
+        ws.cell(row=excel_row, column=1, value=first["Job/Sequence Name"])
+        ws.cell(row=excel_row, column=2, value=first["Stage Name"])
+        ws.cell(row=excel_row, column=3, value=first["SQL Query"])
 
-        # Write main fields (Job, Stage, SQL) in the first row of the group
-        ws.cell(row=excel_row, column=1, value=first_row_data["Job/Sequence Name"])
-        ws.cell(row=excel_row, column=2, value=first_row_data["Stage Name"])
-        ws.cell(row=excel_row, column=3, value=first_row_data["SQL Query"])
-
-        # Style columns A-C
         for col in range(1, 4):
             cell = ws.cell(row=excel_row, column=col)
-            cell.alignment = Alignment(
-                horizontal="left", vertical="center", wrap_text=True
-            )
+            cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
             cell.border = thin_border
 
-        # Merge cells for columns A-C (Job, Stage, SQL) only
         if count > 1:
-            for col in range(1, 4):  # columns 1, 2, 3 only
+            for col in range(1, 4):
                 ws.merge_cells(
-                    start_row=excel_row,
-                    start_column=col,
-                    end_row=excel_row + count - 1,
-                    end_column=col,
+                    start_row=excel_row, start_column=col,
+                    end_row=excel_row + count - 1, end_column=col,
                 )
-                cell = ws.cell(row=excel_row, column=col)
-                cell.alignment = Alignment(
+                ws.cell(row=excel_row, column=col).alignment = Alignment(
                     horizontal="left", vertical="center", wrap_text=True
                 )
-
-            # Apply borders to all cells in the merged range
             for offset in range(count):
-                for col in range(1, 6):
+                for col in range(1, 8):
                     ws.cell(row=excel_row + offset, column=col).border = thin_border
 
         excel_row += count
 
-    # Column widths
     ws.column_dimensions["A"].width = 28
     ws.column_dimensions["B"].width = 30
-    ws.column_dimensions["C"].width = 60
-    ws.column_dimensions["D"].width = 40
+    ws.column_dimensions["C"].width = 50
+    ws.column_dimensions["D"].width = 42
     ws.column_dimensions["E"].width = 25
-
-    # Freeze top row
+    ws.column_dimensions["F"].width = 42
+    ws.column_dimensions["G"].width = 25
     ws.freeze_panes = "A2"
 
     wb.save(output_path)
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  Main
-# ═════════════════════════════════════════════════════════════════════════════
-
-def main():
-    input_folder = Path(INPUT_FOLDER).resolve()
-    if not input_folder.exists():
-        diag(f"[ERROR] Input folder not found: {input_folder}")
-        diag("        Update INPUT_FOLDER at the top of this script.")
-        return
-
-    xml_files = sorted(set(
-        glob.glob(str(input_folder / "*.xml")) +
-        glob.glob(str(input_folder / "**" / "*.xml"), recursive=True)
-    ))
-
-    if not xml_files:
-        diag(f"[WARN] No XML files found in: {input_folder}")
-        return
-
-    diag(f"Found {len(xml_files)} XML file(s). Checking for required strings …\n")
-
-    all_rows:        list[dict] = []
-    skipped_count:   int = 0
-    processed_count: int = 0
-
-    for fp in xml_files:
-        fname = Path(fp).name
-        content = read_file_if_meets_criteria(fp)
-
-        if content is None:
-            diag(f"  [SKIP] {fname}")
-            skipped_count += 1
-            continue
-
-        diag(f"  [OK]   {fname}")
-        file_rows = process_file(fp, content)
-        all_rows.extend(file_rows)
-        processed_count += 1
-
-    diag(f"\nProcessed: {processed_count}  |  Skipped: {skipped_count}")
-    diag(f"Total rows extracted: {len(all_rows)}")
-
-    # Write CSV
-    csv_path = Path(OUTPUT_CSV).resolve()
-    with csv_path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
-        writer.writeheader()
-        writer.writerows(all_rows)
-    diag(f"\nCSV written to: {csv_path}")
-
-    # Write Excel with merged cells
-    xlsx_path = Path(OUTPUT_XLSX).resolve()
-    try:
-        write_excel(all_rows, str(xlsx_path))
-        diag(f"Excel written to: {xlsx_path}")
-    except ImportError:
-        diag("[WARN] openpyxl not installed — run: pip install openpyxl")
-        diag("       Only CSV was produced.")
-
-    # Write diagnostic log
-    log_path = Path(DIAG_LOG).resolve()
-    log_path.write_text("\n".join(diag_lines), encoding="utf-8")
-    diag(f"Diagnostic log: {log_path}")
 
 
 if __name__ == "__main__":
