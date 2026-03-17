@@ -275,31 +275,80 @@ def _clean_column_expr(expr: str) -> str:
     """
     Given a raw SELECT column expression, return the actual base column name
     (not the alias).  Strip table/alias qualifiers.
+    Return "" for anything that is NOT a real column reference:
+      literals, CASE expressions, function calls, subqueries, etc.
 
     Examples:
       "t1.ADDR_ID"                        → "ADDR_ID"
       "A.ACCT_NBR AS ACCOUNT_NUM"         → "ACCT_NBR"
       "iods_ast_v.agrmnt_nbr"             → "agrmnt_nbr"
       "V.YR AS YEAR"                      → "YR"
-      "ROW_NUMBER() OVER(...) AS rn"      → "ROW_NUMBER() OVER(...)"
-      "TRIM(x.NAME)"                      → "TRIM(x.NAME)"
+      "0 AS some_flag"                    → ""   (literal)
+      "'N' AS active_flag"                → ""   (string literal)
+      "CASE WHEN x=1 THEN 'Y' END"       → ""   (expression)
+      "ROW_NUMBER() OVER(...) AS rn"      → ""   (window function)
+      "TRIM(x.NAME)"                      → ""   (function call)
+      "( SELECT ... )"                    → ""   (subquery)
       "*"                                 → ""
     """
     expr = expr.strip()
     if not expr or expr == "*":
         return ""
 
-    # Step 1: Strip explicit alias  (... AS alias_name)
+    # ── Early rejection: things that are clearly not column references ────
+    # String literals: 'N', 'ACTIVE', 'text'
+    if re.match(r"^'[^']*'", expr):
+        return ""
+
+    # Numeric literals: 0, 1, 100, 3.14, -5
+    if re.match(r"^-?\d+(\.\d+)?\s*(AS\b|$)", expr, re.IGNORECASE):
+        return ""
+
+    # CASE expressions
+    if re.match(r"^\(?\s*CASE\b", expr, re.IGNORECASE):
+        return ""
+
+    # Subqueries: starts with ( SELECT  or (SELECT
+    if re.match(r"^\(\s*SELECT\b", expr, re.IGNORECASE):
+        return ""
+
+    # NULL literal
+    if re.match(r"^NULL\s*(AS\b|$)", expr, re.IGNORECASE):
+        return ""
+
+    # ── Step 1: Strip explicit alias  (... AS alias_name) ────────────────
     core = re.sub(r"\s+AS\s+[\"'`]?\w+[\"'`]?\s*$", "", expr, flags=re.IGNORECASE).strip()
 
-    # Step 2: Strip implicit alias — but only if the expression before the
-    # last token is a simple qualified name (table.col implicit_alias)
-    # We do NOT strip if it looks like "FUNC(...) alias"
+    # ── More rejections after stripping alias ────────────────────────────
+    # Literal after alias strip
+    if re.match(r"^'[^']*'$", core):
+        return ""
+    if re.match(r"^-?\d+(\.\d+)?$", core):
+        return ""
+    if core.upper() in ("NULL", "SYSDATE", "SYSTIMESTAMP", "USER"):
+        return ""
+
+    # Function calls: FUNC(...), including nested
+    if re.match(r"^\w+\s*\(", core):
+        return ""
+
+    # Expressions starting with ( — subqueries, grouped expressions
+    if core.startswith("("):
+        return ""
+
+    # Arithmetic / concatenation expressions: contains +, -, *, /, ||
+    if re.search(r"[+\-*/]|(\|\|)", core) and not re.match(r"^[\w$.#\"]+$", core):
+        return ""
+
+    # CASE after alias strip
+    if re.match(r"^\s*CASE\b", core, re.IGNORECASE):
+        return ""
+
+    # ── Step 2: Strip implicit alias ─────────────────────────────────────
     tokens = core.split()
     if len(tokens) >= 2:
         last = tokens[-1].strip("\"'`")
         before_last = " ".join(tokens[:-1]).strip()
-        # Only strip implicit alias if what precedes it is a simple qualified name
         if (re.match(r"^(?:[A-Za-z_][\w$#]*\.)*[A-Za-z_][\w$#]*$", before_last)
                 and re.match(r"^[A-Za-z_]\w*$", last)
                 and last.upper() not in (
@@ -309,18 +358,18 @@ def _clean_column_expr(expr: str) -> str:
                 )):
             core = before_last
 
-    # Step 3: If it's a qualified name (table.column or alias.column), take last part
+    # ── Step 3: Qualified name (table.column) → take last part ───────────
     qual_match = re.match(r'(?:(?:"[^"]+"|[A-Za-z_][\w$#]*)\s*\.\s*)+([A-Za-z_][\w$#]*)', core)
     if qual_match:
         return qual_match.group(1)
 
-    # Step 4: Simple unqualified column name
+    # ── Step 4: Simple unqualified column name ───────────────────────────
     simple = re.match(r"^([A-Za-z_][\w$#]*)$", core)
     if simple:
         return simple.group(1)
 
-    # Step 5: Complex expression (function call etc.) — return as-is
-    return core
+    # ── Anything else is not a simple column → skip it ───────────────────
+    return ""
 
 
 # ═════════════════════════════════════════════════════════════════════════════
