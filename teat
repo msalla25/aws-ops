@@ -1,0 +1,448 @@
+#!/usr/bin/env python3
+"""
+AAP 2.4 -> 2.5 Workflow Visualizer Sync
+=======================================
+
+Rebuilds a destination (2.5) workflow job template's visualizer to match a
+source (2.4) workflow, remapping job-template node references BY NAME (since
+template IDs differ between controllers).
+
+Approach: WIPE-AND-REBUILD.
+  1. Read all workflow nodes + edges from the SOURCE workflow.
+  2. Delete ALL existing nodes on the DESTINATION workflow.
+  3. Recreate every node on the destination, resolving each node's
+     unified_job_template by NAME within the destination org.
+  4. Recreate the edges (success / failure / always) between nodes.
+
+Scope / assumptions (per your setup):
+  * Nodes reference JOB TEMPLATES only (no project/inventory syncs,
+    no approval nodes, no nested workflows). If an unexpected node type
+    is found, it is reported and the run aborts before deleting anything,
+    so you never end up with a half-built workflow.
+  * Source and destination live in DIFFERENT orgs; templates are matched
+    by name within the destination org.
+  * Standard library only. Token auth on both controllers.
+
+You provide the workflow IDs explicitly (--src-wf and --dst-wf).
+
+SAFETY
+------
+  * Dry run by default. Pass --commit to actually delete + rebuild.
+  * Pre-flight check: every source node's template must resolve on the
+    destination BEFORE any deletion happens. If any can't be resolved,
+    the script prints the misses and exits without touching the dest.
+
+USAGE
+-----
+  export AAP_SRC_TOKEN='source-pat'
+  export AAP_DST_TOKEN='dest-pat'
+
+  # Dry run - shows the plan, writes nothing:
+  python3 aap_sync_workflow.py \
+      --src-host https://aap24.example.com --src-wf 12 \
+      --dst-host https://aap25.example.com --dst-wf 47 \
+      --dst-org "New Org Name" \
+      --insecure
+
+  # Apply:
+  python3 aap_sync_workflow.py \
+      --src-host https://aap24.example.com --src-wf 12 \
+      --dst-host https://aap25.example.com --dst-wf 47 \
+      --dst-org "New Org Name" \
+      --insecure --commit
+"""
+
+import argparse
+import json
+import os
+import ssl
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Any, Dict, List, Optional
+
+
+# --------------------------------------------------------------------------- #
+# HTTP client
+# --------------------------------------------------------------------------- #
+class Controller:
+    def __init__(
+        self,
+        host: str,
+        token: str,
+        api_base: str = "/api/v2",
+        insecure: bool = False,
+        cabundle: Optional[str] = None,
+        label: str = "controller",
+    ):
+        self.base = host.rstrip("/")
+        self.api_base = "/" + api_base.strip("/")
+        self.label = label
+        if not token:
+            raise ValueError(f"[{label}] a personal access token is required")
+        self._auth_header = f"Bearer {token}"
+
+        if cabundle:
+            self.ctx = ssl.create_default_context(cafile=cabundle)
+        elif insecure:
+            self.ctx = ssl.create_default_context()
+            self.ctx.check_hostname = False
+            self.ctx.verify_mode = ssl.CERT_NONE
+        else:
+            self.ctx = ssl.create_default_context()
+
+    def _request(self, method: str, path: str, body: Optional[dict] = None) -> Any:
+        if path.startswith("http"):
+            url = path
+        else:
+            url = self.base + self.api_base + path
+        data = None
+        headers = {"Authorization": self._auth_header, "Accept": "application/json"}
+        if body is not None:
+            data = json.dumps(body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(req, context=self.ctx, timeout=60) as resp:
+                payload = resp.read().decode("utf-8")
+                return json.loads(payload) if payload else None
+        except urllib.error.HTTPError as e:
+            detail = ""
+            try:
+                detail = e.read().decode("utf-8")
+            except Exception:
+                pass
+            raise RuntimeError(
+                f"[{self.label}] {method} {url} -> HTTP {e.code}: {detail}"
+            ) from None
+        except urllib.error.URLError as e:
+            raise RuntimeError(
+                f"[{self.label}] {method} {url} -> connection error: {e.reason}"
+            ) from None
+
+    def get(self, path: str) -> Any:
+        return self._request("GET", path)
+
+    def post(self, path: str, body: dict) -> Any:
+        return self._request("POST", path, body)
+
+    def delete(self, path: str) -> Any:
+        return self._request("DELETE", path)
+
+    def get_all(self, path: str) -> List[dict]:
+        results: List[dict] = []
+        next_path: Optional[str] = path
+        while next_path:
+            # Pagination 'next' comes back as a full path including the API
+            # prefix (e.g. /api/controller/v2/...). Convert to an absolute URL
+            # so _request does not prepend api_base a second time.
+            if next_path.startswith("/api/"):
+                page = self.get(self.base + next_path)
+            else:
+                page = self.get(next_path)
+            if page is None:
+                break
+            results.extend(page.get("results", []))
+            next_path = page.get("next")
+        return results
+
+
+# --------------------------------------------------------------------------- #
+# Lookups
+# --------------------------------------------------------------------------- #
+def get_workflow(ctrl: Controller, wf_id: int) -> dict:
+    wf = ctrl.get(f"/workflow_job_templates/{wf_id}/")
+    if not wf:
+        raise RuntimeError(f"[{ctrl.label}] workflow id {wf_id} not found")
+    return wf
+
+
+def find_org_id(ctrl: Controller, org_name: str) -> int:
+    q = urllib.parse.quote(org_name)
+    res = ctrl.get_all(f"/organizations/?name={q}")
+    exact = [o for o in res if o.get("name") == org_name]
+    if not exact:
+        raise RuntimeError(
+            f"[{ctrl.label}] organization '{org_name}' not found "
+            f"(saw {[o.get('name') for o in res]})"
+        )
+    return exact[0]["id"]
+
+
+def get_wf_nodes(ctrl: Controller, wf_id: int) -> List[dict]:
+    return ctrl.get_all(
+        f"/workflow_job_templates/{wf_id}/workflow_nodes/"
+    )
+
+
+def resolve_template_by_name(
+    ctrl: Controller, name: str, org_id: int, cache: Dict[str, Optional[int]]
+) -> Optional[int]:
+    if name in cache:
+        return cache[name]
+    q = urllib.parse.quote(name)
+    res = ctrl.get_all(
+        f"/job_templates/?name={q}&organization={org_id}"
+    )
+    exact = [r for r in res if r.get("name") == name]
+    val = exact[0]["id"] if exact else None
+    cache[name] = val
+    return val
+
+
+# --------------------------------------------------------------------------- #
+# Node field handling
+# --------------------------------------------------------------------------- #
+# Per-node prompt-on-launch overrides that are safe to copy as-is.
+NODE_SCALAR_FIELDS = [
+    "extra_data",
+    "scm_branch",
+    "job_type",
+    "job_tags",
+    "skip_tags",
+    "limit",
+    "diff_mode",
+    "verbosity",
+    "all_parents_must_converge",
+    "identifier",
+]
+
+EDGE_TYPES = [
+    ("success_nodes", "success"),
+    ("failure_nodes", "failure"),
+    ("always_nodes", "always"),
+]
+
+
+def node_template_name(node: dict) -> Optional[str]:
+    """Pull the job template name from a source node's summary_fields."""
+    sf = node.get("summary_fields", {})
+    ujt = sf.get("unified_job_template")
+    return ujt.get("name") if ujt else None
+
+
+def node_template_type(node: dict) -> Optional[str]:
+    sf = node.get("summary_fields", {})
+    ujt = sf.get("unified_job_template")
+    return ujt.get("unified_job_type") if ujt else None
+
+
+# --------------------------------------------------------------------------- #
+# Core sync
+# --------------------------------------------------------------------------- #
+def sync_workflow(
+    src: Controller,
+    dst: Controller,
+    src_wf_id: int,
+    dst_wf_id: int,
+    dst_org_id: int,
+    commit: bool,
+) -> int:
+    src_nodes = get_wf_nodes(src, src_wf_id)
+    if not src_nodes:
+        print("Source workflow has no nodes. Nothing to do.")
+        return 0
+
+    print(f"Source workflow has {len(src_nodes)} node(s).\n")
+
+    # ---- Pre-flight: validate node types and resolve every template ------- #
+    cache: Dict[str, Optional[int]] = {}
+    unexpected_types: List[str] = []
+    unresolved: List[str] = []
+    # src node id -> resolved dest template id
+    src_node_to_template: Dict[int, int] = {}
+
+    for node in src_nodes:
+        ttype = node_template_type(node)
+        tname = node_template_name(node)
+
+        if tname is None or ttype is None:
+            unexpected_types.append(
+                f"node {node['id']}: no unified_job_template "
+                f"(approval node or empty node? not supported)"
+            )
+            continue
+
+        if ttype not in ("job_template", "job"):
+            unexpected_types.append(
+                f"node {node['id']} ('{tname}'): type '{ttype}' "
+                f"is not a job template (not supported by this script)"
+            )
+            continue
+
+        new_id = resolve_template_by_name(dst, tname, dst_org_id, cache)
+        if new_id is None:
+            unresolved.append(tname)
+        else:
+            src_node_to_template[node["id"]] = new_id
+
+    if unexpected_types:
+        print("ABORT: unsupported node types found in source workflow:")
+        for line in unexpected_types:
+            print(f"  - {line}")
+        print("\nThis script handles job-template nodes only. Nothing changed.")
+        return 1
+
+    if unresolved:
+        print("ABORT: these job templates do not exist on the destination "
+              "(by name, in the dest org):")
+        for n in sorted(set(unresolved)):
+            print(f"  - {n}")
+        print("\nCreate/rename them on the destination first. Nothing changed.")
+        return 1
+
+    print("Pre-flight OK: all source nodes map to job templates that exist "
+          "on the destination.\n")
+
+    # ---- Plan / show the rebuild ------------------------------------------ #
+    print("Planned node rebuild (source node -> dest template):")
+    for node in src_nodes:
+        tname = node_template_name(node)
+        print(f"  - node {node['id']}: '{tname}' "
+              f"-> dest template id {src_node_to_template[node['id']]}")
+
+    # Build an id->node lookup and summarize edges for the plan.
+    src_by_id = {n["id"]: n for n in src_nodes}
+    print("\nPlanned edges:")
+    for node in src_nodes:
+        for field, label in EDGE_TYPES:
+            for child_id in node.get(field, []):
+                cn = src_by_id.get(child_id)
+                cname = node_template_name(cn) if cn else f"id {child_id}"
+                print(f"  - '{node_template_name(node)}' --{label}--> '{cname}'")
+
+    dst_existing = get_wf_nodes(dst, dst_wf_id)
+    print(f"\nDestination currently has {len(dst_existing)} node(s); "
+          f"all will be deleted and rebuilt.")
+
+    if not commit:
+        print("\nDRY-RUN only. Re-run with --commit to apply.")
+        return 0
+
+    # ---- Wipe destination nodes ------------------------------------------- #
+    print("\nDeleting existing destination nodes...")
+    for n in dst_existing:
+        dst.delete(f"/workflow_job_template_nodes/{n['id']}/")
+        print(f"  deleted dest node {n['id']}")
+
+    # ---- Recreate nodes --------------------------------------------------- #
+    print("\nCreating nodes on destination...")
+    # map: source node id -> new destination node id
+    src_to_new: Dict[int, int] = {}
+    for node in src_nodes:
+        body: Dict[str, Any] = {
+            "unified_job_template": src_node_to_template[node["id"]],
+        }
+        for f in NODE_SCALAR_FIELDS:
+            if f in node and node[f] not in (None, ""):
+                body[f] = node[f]
+
+        created = dst.post(
+            f"/workflow_job_templates/{dst_wf_id}/workflow_nodes/", body
+        )
+        src_to_new[node["id"]] = created["id"]
+        print(f"  created dest node {created['id']} "
+              f"for '{node_template_name(node)}'")
+
+    # ---- Recreate edges --------------------------------------------------- #
+    print("\nLinking nodes (edges)...")
+    edge_count = 0
+    for node in src_nodes:
+        parent_new = src_to_new[node["id"]]
+        for field, label in EDGE_TYPES:
+            for child_id in node.get(field, []):
+                if child_id not in src_to_new:
+                    print(f"  WARN: edge from node {node['id']} references "
+                          f"unknown child {child_id}, skipping")
+                    continue
+                child_new = src_to_new[child_id]
+                dst.post(
+                    f"/workflow_job_template_nodes/{parent_new}/"
+                    f"{field}/",
+                    {"id": child_new},
+                )
+                edge_count += 1
+                print(f"  linked {parent_new} --{label}--> {child_new}")
+
+    print(f"\nDone. Rebuilt {len(src_to_new)} node(s) and {edge_count} edge(s).")
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# Main
+# --------------------------------------------------------------------------- #
+def build_arg_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description="Sync/rebuild an AAP workflow visualizer between controllers."
+    )
+    p.add_argument("--src-host", required=True, help="Source (2.4) base URL")
+    p.add_argument("--src-wf", required=True, type=int,
+                   help="Source workflow job template ID")
+    p.add_argument("--src-token",
+                   help="Source PAT (or env AAP_SRC_TOKEN)")
+    p.add_argument("--src-api-base", default="/api/v2",
+                   help="Source API base path. AAP 2.4 = /api/v2 (default). "
+                        "AAP 2.5 = /api/controller/v2")
+    p.add_argument("--dst-host", required=True, help="Destination (2.5) base URL")
+    p.add_argument("--dst-wf", required=True, type=int,
+                   help="Destination workflow job template ID")
+    p.add_argument("--dst-token",
+                   help="Destination PAT (or env AAP_DST_TOKEN)")
+    p.add_argument("--dst-api-base", default="/api/controller/v2",
+                   help="Destination API base path. AAP 2.5 = "
+                        "/api/controller/v2 (default). AAP 2.4 = /api/v2")
+    p.add_argument("--dst-org", required=True,
+                   help="Organization name on the destination "
+                        "(templates resolved by name within this org)")
+    p.add_argument("--commit", action="store_true",
+                   help="Actually delete + rebuild. Without this it is a dry run.")
+    p.add_argument("--insecure", action="store_true",
+                   help="Disable TLS verification")
+    p.add_argument("--cabundle", help="Path to CA bundle for TLS verification")
+    return p
+
+
+def main(argv: List[str]) -> int:
+    args = build_arg_parser().parse_args(argv)
+
+    src_token = args.src_token or os.environ.get("AAP_SRC_TOKEN")
+    dst_token = args.dst_token or os.environ.get("AAP_DST_TOKEN")
+    if not src_token:
+        print("ERROR: provide --src-token or set AAP_SRC_TOKEN", file=sys.stderr)
+        return 2
+    if not dst_token:
+        print("ERROR: provide --dst-token or set AAP_DST_TOKEN", file=sys.stderr)
+        return 2
+
+    src = Controller(args.src_host, token=src_token, api_base=args.src_api_base,
+                     insecure=args.insecure, cabundle=args.cabundle, label="SRC-2.4")
+    dst = Controller(args.dst_host, token=dst_token, api_base=args.dst_api_base,
+                     insecure=args.insecure, cabundle=args.cabundle, label="DST-2.5")
+
+    mode = "COMMIT" if args.commit else "DRY-RUN"
+    print(f"=== AAP workflow visualizer sync ({mode}) ===")
+
+    src_wf = get_workflow(src, args.src_wf)
+    dst_wf = get_workflow(dst, args.dst_wf)
+    dst_org_id = find_org_id(dst, args.dst_org)
+
+    print(f"Source:      {args.src_host}{args.src_api_base}  wf {args.src_wf} ('{src_wf.get('name')}')")
+    print(f"Destination: {args.dst_host}{args.dst_api_base}  wf {args.dst_wf} ('{dst_wf.get('name')}')")
+    print(f"Dest org:    {args.dst_org} (id {dst_org_id})\n")
+
+    return sync_workflow(
+        src, dst, args.src_wf, args.dst_wf, dst_org_id, args.commit
+    )
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except RuntimeError as e:
+        print(f"\nERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print("\nInterrupted.", file=sys.stderr)
+        sys.exit(130)
