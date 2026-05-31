@@ -22,20 +22,25 @@ USAGE
   export AAP_SRC_TOKEN='source-pat'
   export AAP_DST_TOKEN='dest-pat'
 
-  # Dry run (default) - shows everything it WOULD do, writes nothing:
+  # Dry run (default) - shows everything it WOULD do, writes nothing.
+  # Org names differ between controllers, so pass both:
   python3 aap_migrate_surveys_schedules.py \
       --src-host https://aap24.example.com \
       --dst-host https://aap25.example.com \
-      --org "My Organization"
+      --src-org "Old Org Name" --dst-org "New Org Name"
+
+  # If the org name is the SAME on both, --dst-org can be omitted:
+  python3 aap_migrate_surveys_schedules.py ... --src-org "My Organization"
 
   # Actually perform the migration:
-  python3 aap_migrate_surveys_schedules.py ... --org "My Organization" --commit
+  python3 aap_migrate_surveys_schedules.py ... \
+      --src-org "Old Org Name" --dst-org "New Org Name" --commit
 
   # Passing tokens explicitly instead of via env:
   python3 aap_migrate_surveys_schedules.py \
       --src-host https://aap24 --src-token SRC_PAT \
       --dst-host https://aap25 --dst-token DST_PAT \
-      --org "My Organization" --commit
+      --src-org "Old Org Name" --dst-org "New Org Name" --commit
 
   # Only migrate surveys (skip schedules), or vice versa:
   python3 aap_migrate_surveys_schedules.py ... --only surveys
@@ -353,7 +358,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--dst-token",
         help="Destination personal access token (or set env AAP_DST_TOKEN)",
     )
-    p.add_argument("--org", required=True, help="Organization name (same on both)")
+    p.add_argument(
+        "--src-org", required=True, help="Organization name on the source (2.4)"
+    )
+    p.add_argument(
+        "--dst-org",
+        help="Organization name on the destination (2.5). "
+        "Defaults to --src-org if omitted.",
+    )
     p.add_argument(
         "--only",
         choices=["surveys", "schedules", "both"],
@@ -400,20 +412,21 @@ def main(argv: List[str]) -> int:
     )
 
     mode = "COMMIT" if args.commit else "DRY-RUN"
+    dst_org_name = args.dst_org or args.src_org
     print(f"=== AAP survey/schedule migration ({mode}) ===")
-    print(f"Source:      {args.src_host}")
-    print(f"Destination: {args.dst_host}")
-    print(f"Org:         {args.org}")
+    print(f"Source:      {args.src_host}  (org: {args.src_org})")
+    print(f"Destination: {args.dst_host}  (org: {dst_org_name})")
     print(f"Scope:       {args.only}\n")
 
-    src_org_id = find_org_id(src, args.org)
-    dst_org_id = find_org_id(dst, args.org)
+    src_org_id = find_org_id(src, args.src_org)
+    dst_org_id = find_org_id(dst, dst_org_name)
 
     src_templates = list_org_templates(src, src_org_id)
     dst_by_name = index_by_name(list_org_templates(dst, dst_org_id))
 
     print(f"Found {len(src_templates)} template(s) in source org "
-          f"'{args.org}', {len(dst_by_name)} in destination org.\n")
+          f"'{args.src_org}', {len(dst_by_name)} in destination org "
+          f"'{dst_org_name}'.\n")
 
     ref_cache: Dict[str, Optional[int]] = {}
     missing_on_dst: List[str] = []
