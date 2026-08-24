@@ -1,0 +1,1927 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ToilLens — ServiceNow incident to automation console</title>
+<style>
+:root{
+  --bg:#0B0F16; --panel:#121926; --panel2:#0E1420; --raise:#18202F;
+  --line:#1E2836; --line2:#2C3A4E;
+  --ink:#E6EDF6; --muted:#8B9AAF; --dim:#5D6B80;
+  --toil:#E8A33D; --auto:#3FC8BE; --prob:#8B7CF6; --bad:#E2646B; --good:#4FBF8B; --info:#5EA9F5;
+  --mono:ui-monospace,"SFMono-Regular","SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,"Helvetica Neue",sans-serif;
+  --r:7px;
+}
+html[data-theme="light"]{
+  --bg:#EEF1F5; --panel:#FFFFFF; --panel2:#F5F7FA; --raise:#FFFFFF;
+  --line:#DFE4EC; --line2:#C6CFDC;
+  --ink:#111A26; --muted:#5A6879; --dim:#8896A8;
+  --toil:#B77410; --auto:#0F8F86; --prob:#6350C9; --bad:#C33F47; --good:#2A8F62; --info:#2570C4;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--line2);border-radius:6px}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ---------- shell ---------- */
+.app{display:grid;grid-template-columns:230px 1fr;height:100vh;overflow:hidden}
+.side{background:var(--panel2);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.brand{padding:16px 16px 12px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center}
+.mark{width:26px;height:26px;flex:0 0 26px;border-radius:5px;background:linear-gradient(150deg,var(--toil),var(--auto));display:grid;place-items:center;color:#07101a;font-weight:800;font-size:13px;font-family:var(--mono)}
+.brand b{display:block;font-size:14px;letter-spacing:.2px}
+.brand small{display:block;color:var(--dim);font-size:10.5px;font-family:var(--mono);letter-spacing:.08em;text-transform:uppercase}
+nav{padding:10px 8px;overflow:auto;flex:1;min-height:0}
+.navbtn{display:flex;width:100%;gap:9px;align-items:center;background:none;border:0;padding:8px 9px;border-radius:6px;color:var(--muted);cursor:pointer;text-align:left;font-size:13px}
+.navbtn:hover{background:var(--raise);color:var(--ink)}
+.navbtn[aria-current="true"]{background:var(--raise);color:var(--ink);box-shadow:inset 2px 0 0 var(--toil)}
+.navbtn .ico{width:16px;text-align:center;font-family:var(--mono);font-size:12px;color:var(--dim)}
+.navbtn[aria-current="true"] .ico{color:var(--toil)}
+.navbtn .tag{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+.side-foot{padding:10px;border-top:1px solid var(--line);display:grid;gap:6px}
+.status{font-family:var(--mono);font-size:10.5px;color:var(--dim);line-height:1.5;padding:6px 8px;border:1px dashed var(--line2);border-radius:6px}
+.status b{color:var(--ink);font-weight:600}
+
+.main{display:flex;flex-direction:column;min-width:0;min-height:0}
+.topbar{border-bottom:1px solid var(--line);background:var(--panel2);padding:8px 14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.views{overflow:auto;flex:1;padding:18px;min-height:0}
+.view{display:none;max-width:1500px;margin:0 auto}
+.view.on{display:block}
+
+/* ---------- controls ---------- */
+.btn{background:var(--raise);border:1px solid var(--line2);color:var(--ink);padding:6px 11px;border-radius:6px;cursor:pointer;font-size:12.5px;white-space:nowrap;transition:border-color .12s,background .12s}
+.btn:hover{border-color:var(--muted)}
+.btn:focus-visible,.navbtn:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--info);outline-offset:1px}
+.btn.primary{background:var(--toil);border-color:var(--toil);color:#150E02;font-weight:600}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.ghost{background:transparent}
+.btn.sm{padding:3px 8px;font-size:11.5px}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+select,input[type=text],input[type=number],input[type=date],input[type=search]{background:var(--panel);border:1px solid var(--line2);border-radius:6px;padding:5px 8px;font-size:12.5px}
+label.fld{display:grid;gap:4px;font-size:11px;color:var(--muted)}
+
+/* multiselect */
+.ms{position:relative}
+.ms>button{display:flex;gap:6px;align-items:center;background:var(--panel);border:1px solid var(--line2);border-radius:6px;padding:5px 9px;font-size:12.5px;cursor:pointer;max-width:230px}
+.ms>button .n{font-family:var(--mono);font-size:10.5px;color:var(--toil)}
+.ms>button .cv{color:var(--dim);font-size:10px}
+.ms-menu{display:none;position:absolute;z-index:60;top:calc(100% + 4px);left:0;width:264px;background:var(--panel);border:1px solid var(--line2);border-radius:8px;box-shadow:0 14px 38px rgba(0,0,0,.5);padding:8px}
+.ms.open .ms-menu{display:block}
+.ms-list{max-height:250px;overflow:auto;margin-top:6px;display:grid;gap:1px}
+.ms-list label{display:flex;gap:7px;align-items:center;padding:4px 6px;border-radius:4px;cursor:pointer;font-size:12.5px}
+.ms-list label:hover{background:var(--raise)}
+.ms-list .ct{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+.ms-menu .row{display:flex;gap:6px;margin-top:6px}
+.ms-menu input[type=search]{width:100%}
+
+/* ---------- panels ---------- */
+.grid{display:grid;gap:12px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.card>header{padding:11px 14px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
+.card>header h3{margin:0;font-size:12.5px;font-weight:600;letter-spacing:.02em}
+.card>header .sub{font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+.card>header .right{margin-left:auto;display:flex;gap:6px;align-items:center}
+.card .body{padding:14px}
+.eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.view>h2{margin:0 0 3px;font-size:19px;letter-spacing:-.01em}
+.view>p.lede{margin:0 0 16px;color:var(--muted);font-size:13px;max-width:78ch}
+
+/* KPI */
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:13px 14px;position:relative;overflow:hidden}
+.kpi::after{content:"";position:absolute;inset:0 auto 0 0;width:2px;background:var(--k,var(--line2))}
+.kpi .lbl{font-family:var(--mono);font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--dim)}
+.kpi .val{font-family:var(--mono);font-size:25px;font-weight:600;letter-spacing:-.02em;margin-top:5px;font-variant-numeric:tabular-nums;color:var(--k,var(--ink))}
+.kpi .val small{font-size:13px;color:var(--muted);font-weight:400}
+.kpi .note{font-size:11.5px;color:var(--muted);margin-top:3px}
+
+/* ---------- tables ---------- */
+.tw{overflow:auto;max-height:none}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+thead th{position:sticky;top:0;background:var(--panel2);z-index:2;font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:500;cursor:pointer;white-space:nowrap;border-bottom:1px solid var(--line2)}
+thead th:hover{color:var(--ink)}
+thead th .ar{color:var(--toil)}
+tbody tr:hover{background:var(--panel2)}
+td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+td.mono{font-family:var(--mono);font-size:11.5px}
+td.wrap{min-width:240px}
+.rank{font-family:var(--mono);color:var(--dim);font-size:11px}
+.expander{cursor:pointer}
+.sub-row td{background:var(--panel2);padding:0}
+.sub-inner{padding:12px 14px;border-left:2px solid var(--toil)}
+
+/* signature chip — the artifact of the subject's world */
+.sig{font-family:var(--mono);font-size:11.5px;color:var(--muted);word-break:break-word;line-height:1.6}
+.sig .ph{color:var(--auto);background:color-mix(in srgb,var(--auto) 14%,transparent);border-radius:3px;padding:0 3px}
+.sigbox{border:1px solid var(--line2);border-left:2px solid var(--auto);border-radius:5px;padding:8px 10px;background:var(--panel2)}
+
+/* bars & pills */
+.bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;min-width:52px}
+.bar>i{display:block;height:100%;border-radius:3px;background:var(--toil);transition:width .5s cubic-bezier(.2,.8,.2,1)}
+.ledger{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--line);min-width:90px}
+.ledger i{display:block;height:100%}
+.pill{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;padding:2px 7px;border-radius:99px;border:1px solid var(--line2);color:var(--muted);white-space:nowrap}
+.pill.toil{color:var(--toil);border-color:color-mix(in srgb,var(--toil) 45%,transparent);background:color-mix(in srgb,var(--toil) 10%,transparent)}
+.pill.auto{color:var(--auto);border-color:color-mix(in srgb,var(--auto) 45%,transparent);background:color-mix(in srgb,var(--auto) 10%,transparent)}
+.pill.prob{color:var(--prob);border-color:color-mix(in srgb,var(--prob) 45%,transparent);background:color-mix(in srgb,var(--prob) 10%,transparent)}
+.pill.bad{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,transparent);background:color-mix(in srgb,var(--bad) 10%,transparent)}
+.pill.good{color:var(--good);border-color:color-mix(in srgb,var(--good) 45%,transparent);background:color-mix(in srgb,var(--good) 10%,transparent)}
+.score{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:600}
+.dot{width:7px;height:7px;border-radius:99px;display:inline-block}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);align-items:center}
+.legend span{display:inline-flex;gap:6px;align-items:center}
+
+/* charts */
+svg{display:block;width:100%;height:auto;overflow:visible}
+.ax{stroke:var(--line);stroke-width:1}
+.axtxt{fill:var(--dim);font-family:var(--mono);font-size:9px}
+.gl{stroke:var(--line);stroke-dasharray:2 4;stroke-width:1}
+.blab{fill:var(--muted);font-family:var(--mono);font-size:9.5px}
+
+/* dropzone / empty */
+.empty{border:1.5px dashed var(--line2);border-radius:12px;padding:44px 26px;text-align:center;background:var(--panel2)}
+.empty h3{margin:0 0 6px;font-size:17px}
+.empty p{margin:0 auto 16px;color:var(--muted);max-width:60ch;font-size:13px}
+.drop{position:fixed;inset:0;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(3px);display:none;place-items:center;z-index:200;font-size:17px}
+.drop.on{display:grid}
+.drop div{border:2px dashed var(--toil);border-radius:14px;padding:52px 70px;font-family:var(--mono);color:var(--toil)}
+
+/* toast */
+.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%) translateY(24px);background:var(--raise);border:1px solid var(--line2);border-left:3px solid var(--good);padding:9px 15px;border-radius:7px;font-size:12.5px;opacity:0;pointer-events:none;transition:.2s;z-index:300;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+
+.hint{font-size:11.5px;color:var(--dim);margin-top:8px}
+.split{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.spacer{flex:1}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:12.5px}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.mapgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.warn{border-left:2px solid var(--toil);background:color-mix(in srgb,var(--toil) 7%,transparent);padding:9px 12px;border-radius:5px;font-size:12.5px;color:var(--muted)}
+
+@media (max-width:960px){
+  .app{grid-template-columns:1fr;grid-template-rows:auto auto 1fr;height:auto;min-height:100vh;overflow:visible}
+  .side{border-right:0;border-bottom:1px solid var(--line)}
+  nav{display:flex;gap:4px;overflow-x:auto;padding:8px}
+  .navbtn{width:auto;white-space:nowrap}
+  .navbtn .tag{display:none}
+  .side-foot{grid-template-columns:1fr 1fr 1fr}
+  .side-foot .status{grid-column:1/-1}
+  .g2,.g3,.g4{grid-template-columns:1fr}
+  .views{padding:12px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <div class="mark">TL</div>
+      <div><b>ToilLens</b><small>incident → automation</small></div>
+    </div>
+    <nav id="nav"></nav>
+    <div class="side-foot">
+      <div class="status" id="status">No data loaded.<br>Drop a ServiceNow CSV anywhere.</div>
+      <button class="btn primary" id="btnOpen">Load CSV</button>
+      <button class="btn ghost" id="btnSample">Load sample data</button>
+      <button class="btn ghost" id="btnTheme">Switch to light</button>
+    </div>
+  </aside>
+  <div class="main">
+    <div class="topbar" id="topbar"></div>
+    <div class="views" id="views"></div>
+  </div>
+</div>
+<input type="file" id="file" accept=".csv,.txt,text/csv" hidden>
+<div class="drop" id="drop"><div>Drop the CSV to analyze</div></div>
+<div class="toast" id="toast"></div>
+<script>
+/* ============================================================
+   ToilLens — ServiceNow incident → toil & automation console
+   Single file, no dependencies. All processing stays in-browser.
+   ============================================================ */
+'use strict';
+
+/* ---------- tiny utils ---------- */
+const $ = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.prototype.slice.call((r || document).querySelectorAll(s));
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const uniq = a => Array.from(new Set(a));
+const num = n => (n == null || !isFinite(n)) ? '—' : Math.round(n).toLocaleString();
+const dec = (n, d) => (n == null || !isFinite(n)) ? '—' : (Math.round(n * Math.pow(10, d || 1)) / Math.pow(10, d || 1)).toLocaleString();
+const money = n => (n == null || !isFinite(n)) ? '—' : (Math.abs(n) >= 1000 ? '$' + Math.round(n).toLocaleString() : '$' + Math.round(n));
+const pct = n => (n == null || !isFinite(n)) ? '—' : (Math.round(n * 1000) / 10) + '%';
+const hrs = h => (h == null || !isFinite(h)) ? '—' : h < 1 ? Math.round(h * 60) + 'm' : h < 72 ? (Math.round(h * 10) / 10) + 'h' : (Math.round(h / 24 * 10) / 10) + 'd';
+const median = a => { if (!a.length) return NaN; const b = a.slice().sort((x, y) => x - y); const m = b.length >> 1; return b.length % 2 ? b[m] : (b[m - 1] + b[m]) / 2; };
+const quant = (a, q) => { if (!a.length) return NaN; const b = a.slice().sort((x, y) => x - y); const p = (b.length - 1) * q, lo = Math.floor(p), hi = Math.ceil(p); return b[lo] + (b[hi] - b[lo]) * (p - lo); };
+const sum = a => a.reduce((x, y) => x + (isFinite(y) ? y : 0), 0);
+const mean = a => a.length ? sum(a) / a.length : NaN;
+const topN = (map, n) => Array.from(map.entries()).sort((a, b) => b[1] - a[1]).slice(0, n);
+const bump = (map, k, by) => map.set(k, (map.get(k) || 0) + (by == null ? 1 : by));
+const top1 = m => { const t = topN(m, 1)[0]; return t ? t[0] : ''; };
+const topStr = (m, n) => topN(m, n).map(x => x[0] + ' (' + x[1] + ')').join(' | ');
+const DAYNAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('on');
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('on'), 2600);
+}
+
+/* ---------- state ---------- */
+const S = {
+  headers: [], rows: [], map: {}, incidents: [], clusters: [], view: 'overview',
+  sort: {}, expanded: {}, limit: {},
+  filters: { from: '', to: '', group: [], priority: [], category: [], state: [], q: '', flag: '' },
+  cfg: {
+    rate: 85,             // loaded hourly cost of an engineer
+    handsOn: 0.35,        // share of ticket duration that is actual human touch time
+    minTouch: 15,         // floor, minutes
+    capTouch: 6,          // ceiling, hours
+    bhStart: 8, bhEnd: 18,
+    sim: 0.62,            // signature merge threshold
+    autoEff: 0.8,         // realistic share of touch time automation removes
+    build: { S: 24, M: 80, L: 200 },
+    dateOrder: 'auto'
+  }
+};
+
+/* ---------- CSV ---------- */
+function sniffDelim(text) {
+  const line = text.slice(0, 8000).split(/\r?\n/)[0] || '';
+  let best = ',', bestN = -1;
+  [',', ';', '\t', '|'].forEach(d => {
+    let n = 0, q = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') q = !q; else if (c === d && !q) n++;
+    }
+    if (n > bestN) { bestN = n; best = d; }
+  });
+  return best;
+}
+
+function parseCSV(text, delim) {
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  const d = delim || sniffDelim(text);
+  const rows = []; let row = [], field = '', inQ = false, i = 0;
+  const n = text.length;
+  while (i < n) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i += 2; continue; }
+        inQ = false; i++; continue;
+      }
+      field += c; i++; continue;
+    }
+    if (c === '"') { inQ = true; i++; continue; }
+    if (c === d) { row.push(field); field = ''; i++; continue; }
+    if (c === '\r') { i++; continue; }
+    if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; i++; continue; }
+    field += c; i++;
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  // drop fully blank rows
+  return rows.filter(r => r.some(v => String(v).trim() !== ''));
+}
+
+/* ---------- dates ---------- */
+function detectDateOrder(vals) {
+  let dmy = 0, mdy = 0;
+  for (const v of vals) {
+    const m = String(v).match(/^\s*(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
+    if (!m) continue;
+    if (+m[1] > 12) dmy++; else if (+m[2] > 12) mdy++;
+  }
+  return dmy > mdy ? 'DMY' : 'MDY';
+}
+
+function parseDate(v) {
+  if (!v) return null;
+  if (v instanceof Date) return isNaN(v) ? null : v;
+  const s = String(v).trim();
+  if (!s || /^(null|n\/a|na|-|--)$/i.test(s)) return null;
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0));
+  m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})(?:[ ,]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?\s*(AM|PM)?/i);
+  if (m) {
+    let a = +m[1], b = +m[2], y = +m[3]; if (y < 100) y += 2000;
+    let day, mon;
+    const order = S.cfg.dateOrder === 'auto' ? (a > 12 ? 'DMY' : S.cfg._auto || 'MDY') : S.cfg.dateOrder;
+    if (order === 'DMY' || a > 12) { day = a; mon = b; } else { mon = a; day = b; }
+    let H = +(m[4] || 0); const ap = (m[7] || '').toUpperCase();
+    if (ap === 'PM' && H < 12) H += 12; if (ap === 'AM' && H === 12) H = 0;
+    return new Date(y, mon - 1, day, H, +(m[5] || 0), +(m[6] || 0));
+  }
+  const t = Date.parse(s);
+  return isNaN(t) ? null : new Date(t);
+}
+const ymd = d => d ? d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') : '';
+const ym = d => d ? d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') : '';
+const dstr = d => d ? ymd(d) + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') : '';
+
+/* ---------- column mapping ---------- */
+const FIELDS = [
+  { k: 'id', label: 'Incident number', alias: ['number', 'incident', 'incident number', 'inc', 'ticket', 'ticket number', 'task', 'id', 'record'] },
+  { k: 'opened', label: 'Opened / created', alias: ['opened', 'opened at', 'opened_at', 'created', 'created on', 'sys created on', 'sys_created_on', 'reported date', 'open time', 'start'] },
+  { k: 'resolved', label: 'Resolved', alias: ['resolved', 'resolved at', 'resolved_at', 'resolve time', 'resolution date', 'u_resolved'] },
+  { k: 'closed', label: 'Closed', alias: ['closed', 'closed at', 'closed_at', 'close date', 'end'] },
+  { k: 'shortDesc', label: 'Short description', alias: ['short description', 'short_description', 'summary', 'title', 'subject', 'description short', 'issue'] },
+  { k: 'desc', label: 'Description', alias: ['description', 'details', 'long description', 'notes', 'additional comments'] },
+  { k: 'priority', label: 'Priority', alias: ['priority', 'prio', 'severity', 'sev'] },
+  { k: 'impact', label: 'Impact', alias: ['impact'] },
+  { k: 'urgency', label: 'Urgency', alias: ['urgency'] },
+  { k: 'state', label: 'State / status', alias: ['state', 'status', 'incident state', 'incident_state'] },
+  { k: 'category', label: 'Category', alias: ['category', 'u_category', 'type'] },
+  { k: 'subcategory', label: 'Subcategory', alias: ['subcategory', 'sub category', 'sub-category', 'u_subcategory'] },
+  { k: 'group', label: 'Assignment group', alias: ['assignment group', 'assignment_group', 'assigned group', 'support group', 'group', 'team', 'resolver group'] },
+  { k: 'assignee', label: 'Assigned to', alias: ['assigned to', 'assigned_to', 'assignee', 'owner', 'resolved by', 'resolved_by'] },
+  { k: 'ci', label: 'Configuration item', alias: ['configuration item', 'cmdb ci', 'cmdb_ci', 'ci', 'affected ci', 'service', 'business service', 'application', 'app name', 'host', 'server'] },
+  { k: 'closeCode', label: 'Close code', alias: ['close code', 'close_code', 'resolution code', 'resolution type', 'closure code', 'cause code'] },
+  { k: 'closeNotes', label: 'Close notes', alias: ['close notes', 'close_notes', 'resolution notes', 'resolution', 'work notes'] },
+  { k: 'reassign', label: 'Reassignment count', alias: ['reassignment count', 'reassignment_count', 'reassignments', 'transfers'] },
+  { k: 'reopen', label: 'Reopen count', alias: ['reopen count', 'reopen_count', 'reopened', 'reopens'] },
+  { k: 'sla', label: 'Made SLA', alias: ['made sla', 'made_sla', 'sla met', 'sla', 'breached', 'sla breach'] },
+  { k: 'caller', label: 'Caller / requester', alias: ['caller', 'caller id', 'caller_id', 'requested for', 'requester', 'opened by', 'reported by'] },
+  { k: 'channel', label: 'Contact type / channel', alias: ['contact type', 'contact_type', 'channel', 'source', 'origin', 'opened via'] },
+  { k: 'location', label: 'Location', alias: ['location', 'site', 'region', 'country'] }
+];
+
+const normHdr = h => String(h || '').toLowerCase().replace(/[_\-.]+/g, ' ').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+
+function autoMap(headers) {
+  const map = {}; const used = new Set();
+  const norm = headers.map(normHdr);
+  FIELDS.forEach(f => {
+    let best = -1, bestScore = 0;
+    norm.forEach((h, i) => {
+      if (used.has(i) || !h) return;
+      let sc = 0;
+      if (f.alias.indexOf(h) >= 0) sc = 100 - f.alias.indexOf(h);
+      else if (f.alias.some(a => h === a + 's')) sc = 70;
+      else if (f.alias.some(a => a.length > 4 && h.indexOf(a) >= 0)) sc = 45 - h.length * 0.1;
+      else if (f.alias.some(a => a.length > 5 && a.indexOf(h) >= 0 && h.length > 4)) sc = 30;
+      if (sc > bestScore) { bestScore = sc; best = i; }
+    });
+    if (best >= 0) { map[f.k] = headers[best]; used.add(best); }
+  });
+  return map;
+}
+
+/* ---------- priority ---------- */
+function priorityRank(v) {
+  const s = String(v || '').toLowerCase();
+  const m = s.match(/(\d)/);
+  if (m) { const n = +m[1]; if (n >= 1 && n <= 5) return n; }
+  if (/critical|sev\s*1|p1|highest|emergency/.test(s)) return 1;
+  if (/high|sev\s*2|p2|major/.test(s)) return 2;
+  if (/moderate|medium|sev\s*3|p3|normal/.test(s)) return 3;
+  if (/low|sev\s*4|p4|minor/.test(s)) return 4;
+  if (/planning|sev\s*5|p5/.test(s)) return 5;
+  return 3;
+}
+const PRIO_LABEL = { 1: 'P1 Critical', 2: 'P2 High', 3: 'P3 Moderate', 4: 'P4 Low', 5: 'P5 Planning' };
+const isResolvedState = v => /resolv|clos|complete|done|cancel/i.test(String(v || ''));
+
+/* ---------- build incident objects ---------- */
+function buildIncidents() {
+  const m = S.map, H = S.headers;
+  const idx = {}; Object.keys(m).forEach(k => { const i = H.indexOf(m[k]); if (i >= 0) idx[k] = i; });
+  const get = (r, k) => idx[k] == null ? '' : (r[idx[k]] == null ? '' : String(r[idx[k]]).trim());
+
+  // auto-detect date order once from the opened column
+  if (idx.opened != null) {
+    S.cfg._auto = detectDateOrder(S.rows.slice(0, 400).map(r => r[idx.opened]));
+  }
+
+  const out = [];
+  const bh0 = S.cfg.bhStart, bh1 = S.cfg.bhEnd;
+  S.rows.forEach((r, i) => {
+    const opened = parseDate(get(r, 'opened'));
+    const resolved = parseDate(get(r, 'resolved')) || parseDate(get(r, 'closed'));
+    const short = get(r, 'shortDesc') || get(r, 'desc').slice(0, 160) || get(r, 'category') || '(no description)';
+    const st = get(r, 'state');
+    let mttr = (opened && resolved && resolved > opened) ? (resolved - opened) / 36e5 : null;
+    if (mttr != null && mttr > 24 * 400) mttr = null; // junk guard
+    const slaRaw = get(r, 'sla');
+    let breached = null;
+    if (slaRaw !== '') {
+      if (/^(true|yes|y|1|met)$/i.test(slaRaw)) breached = /breach/i.test(String(m.sla || '')) ? true : false;
+      else if (/^(false|no|n|0|missed|breached)$/i.test(slaRaw)) breached = /breach/i.test(String(m.sla || '')) ? false : true;
+    }
+    const dow = opened ? opened.getDay() : null;
+    const hour = opened ? opened.getHours() : null;
+    const after = opened ? (dow === 0 || dow === 6 || hour < bh0 || hour >= bh1) : false;
+    out.push({
+      i, raw: r,
+      id: get(r, 'id') || ('ROW-' + (i + 1)),
+      opened, resolved, mttr,
+      short, desc: get(r, 'desc'),
+      prio: priorityRank(get(r, 'priority') || get(r, 'impact')),
+      prioRaw: get(r, 'priority'),
+      state: st || (resolved ? 'Resolved' : 'Open'),
+      done: st ? isResolvedState(st) : !!resolved,
+      category: get(r, 'category') || '(none)',
+      subcat: get(r, 'subcategory'),
+      group: get(r, 'group') || '(unassigned)',
+      assignee: get(r, 'assignee'),
+      ci: get(r, 'ci') || '(none)',
+      closeCode: get(r, 'closeCode'),
+      closeNotes: get(r, 'closeNotes'),
+      reassign: parseFloat(get(r, 'reassign')) || 0,
+      reopen: parseFloat(get(r, 'reopen')) || 0,
+      breached,
+      caller: get(r, 'caller'),
+      channel: get(r, 'channel'),
+      location: get(r, 'location'),
+      month: ym(opened), dow, hour, after,
+      cid: -1
+    });
+  });
+  S.incidents = out;
+}
+/* ============================================================
+   Signature extraction, clustering, scoring
+   ============================================================ */
+
+const STOP = new Set(('the a an of on in at for to and or is are was were be been being with from by as it its this that these those ' +
+  'please kindly hi hello team dear thanks thank regards not no yes we you i has have had do does did will would can could should ' +
+  'need needs required requesting requested issue issues problem incident ticket case new open close closed user users ' +
+  'unable able getting getting seeing see also same again due there their they').split(/\s+/));
+
+/* Turn a free-text description into a stable signature by masking the volatile parts. */
+function normText(s) {
+  return String(s || '').toLowerCase()
+    .replace(/https?:\/\/\S+/g, ' <url> ')
+    .replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, ' <email> ')
+    .replace(/\b\d{1,3}(\.\d{1,3}){3}\b/g, ' <ip> ')
+    .replace(/\b[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}\b/g, ' <id> ')
+    .replace(/\b[0-9a-f]{12,}\b/g, ' <hash> ')
+    .replace(/\b(inc|chg|req|ritm|prb|task|rtsk|sctask)[0-9]{4,}\b/g, ' <ref> ')
+    .replace(/\b\d{4}-\d{2}-\d{2}([t ]\d{2}:\d{2}(:\d{2})?)?\b/g, ' <date> ')
+    .replace(/\b\d{1,2}:\d{2}(:\d{2})?\s*(am|pm)?\b/g, ' <time> ')
+    .replace(/\b(?=[a-z0-9-]*\d)[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)+\b/g, ' <host> ')
+    .replace(/\b[a-z]:\\[^\s]+|\/(?:[\w.-]+\/){1,}[\w.-]*/g, ' <path> ')
+    .replace(/\b\d+(\.\d+)?\s*(%|gb|mb|tb|kb|ms|sec|secs|s|min|mins|hrs|hours)\b/g, ' <qty> ')
+    .replace(/\b\d+(\.\d+)?\b/g, ' <n> ')
+    .replace(/[^a-z0-9<>_ ]+/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
+
+function tokenize(nt) {
+  const seen = new Set(), out = [];
+  nt.split(' ').forEach(t => {
+    if (t.length < 3 || t[0] === '<' || STOP.has(t)) return;
+    if (seen.has(t)) return; seen.add(t); out.push(t);
+  });
+  return out.slice(0, 14);
+}
+
+function jaccard(a, b) {
+  if (!a.length || !b.length) return 0;
+  const sa = new Set(a); let inter = 0;
+  for (const t of b) if (sa.has(t)) inter++;
+  return inter / (a.length + b.length - inter);
+}
+
+/* ---------- work families: what kind of work is this, and can a machine do it ---------- */
+const FAMILIES = [
+  { id: 'access', label: 'Access & identity', auto: 0.90, tier: 'M', color: 'var(--auto)',
+    re: /password|passwd|unlock|locked out|account lock|access request|permission|entitle|ad group|role assign|revoke|onboard|offboard|mfa|token expired|sso|login fail|credential/,
+    fix: 'Self-service request with policy-based auto-approval and an audit trail. No human in the happy path.' },
+  { id: 'space', label: 'Capacity: disk & logs', auto: 0.95, tier: 'S', color: 'var(--auto)',
+    re: /\bdisk\b|file ?system|\/var\b|\bspace\b|storage full|log rotat|\bpurge\b|clean ?up|\binode\b|volume full|\bquota\b|filling up/,
+    fix: 'Scheduled cleanup and log rotation, plus a capacity forecast alert that fires days before the threshold.' },
+  { id: 'restart', label: 'Restart, hang, memory', auto: 0.85, tier: 'S', color: 'var(--auto)',
+    re: /restart|reboot|bounce|hung|hang|unresponsive|thread pool|threads? stuck|\bheap\b|out of memory|\boom\b|gc pause|memory (leak|utilis|utiliz|usage)|\bjvm\b|wildfly|jboss|tomcat|crashloop|pod restart|service down|process down|cpu (high|above|utilis|utiliz)/,
+    fix: 'Guarded self-heal: health check, drain, restart, verify — with a rate limit and an auto-raised ticket for repeats.' },
+  { id: 'job', label: 'Batch & job failure', auto: 0.80, tier: 'M', color: 'var(--auto)',
+    re: /batch|job fail|failed job|scheduler|autosys|control-m|cron|etl|re-?run|abend|feed (fail|missing)|file not received|sftp|data load|interface fail/,
+    fix: 'Idempotent auto-retry with dependency awareness; escalate only after retries are exhausted.' },
+  { id: 'cert', label: 'Certificates & secrets', auto: 0.90, tier: 'M', color: 'var(--auto)',
+    re: /certificat|ssl|tls|keystore|truststore|expir(y|ed|ing|ation)|renew|secret rotat|api key|vault|keypair/,
+    fix: 'Automated lifecycle: discover, renew, deploy, verify. Expiry inventory published as a dashboard.' },
+  { id: 'noise', label: 'Alert noise', auto: 0.70, tier: 'S', color: 'var(--bad)',
+    re: /false positive|flapping|auto ?clos|no action|duplicate|test alert|alert cleared|self.?resolv|informational|monitoring only|not an issue|no impact/,
+    fix: 'Tune it out: raise thresholds, dedupe, correlate, add suppression windows. This is not work, it is interruption.' },
+  { id: 'queue', label: 'Messaging & queues', auto: 0.80, tier: 'M', color: 'var(--auto)',
+    re: /queue|kafka|consumer lag|amq|activemq|\bmq\b|jms|topic|dead letter|\bdlq\b|broker|message backlog|stuck message/,
+    fix: 'Lag-based autoscaling for consumers plus self-service DLQ replay tooling.' },
+  { id: 'db', label: 'Database operations', auto: 0.70, tier: 'M', color: 'var(--auto)',
+    re: /oracle|\bsql\b|database|\bdb\b|deadlock|blocking session|kill session|long.?running quer|index rebuild|db link|connection pool|datafile|tablespace|archive log|redo log/,
+    fix: 'Automated blocking-session remediation with guardrails; connection pool sizing moved to config-as-code.' },
+  { id: 'network', label: 'Network & connectivity', auto: 0.55, tier: 'M', color: 'var(--info)',
+    re: /network|latency|packet|firewall|\bdns\b|\bvpn\b|timeout connecting|connection refused|unreachable|port (block|open)|load balancer|\bf5\b|routing|proxy block/,
+    fix: 'Ship a one-click connectivity diagnostic pack so triage stops being manual; move firewall asks to a request workflow.' },
+  { id: 'deploy', label: 'Change fallout', auto: 0.60, tier: 'L', color: 'var(--prob)',
+    re: /deploy|release|post.?(change|implementation)|rollback|config change|version mismatch|migration|patch(ing)?|upgrade|after change/,
+    fix: 'Pre-flight checks, progressive rollout, automated rollback. Every one of these is a change-quality signal.' },
+  { id: 'report', label: 'Manual data pulls', auto: 0.90, tier: 'S', color: 'var(--auto)',
+    re: /report|extract|data pull|manual run|ad.?hoc|reconcil|export data|query request|provide (file|data)|need data|statement copy/,
+    fix: 'Scheduled delivery or a read-only self-service view. Nobody should run a query on request.' },
+  { id: 'api', label: 'API & gateway', auto: 0.60, tier: 'M', color: 'var(--info)',
+    re: /apigee|gateway|api proxy|50[234] error|http (error|50)|rate limit|throttl|endpoint (down|error)|service unavailable|bad gateway/,
+    fix: 'Circuit breakers and retry budgets, gateway autoscaling, synthetic checks that catch it before customers do.' },
+  { id: 'app', label: 'Application defect', auto: 0.25, tier: 'L', color: 'var(--prob)',
+    re: /exception|nullpointer|stack ?trace|\bbug\b|defect|code fix|functional (issue|error)|calculation|incorrect (data|value|amount)|data corrupt|wrong result/,
+    fix: 'This is engineering backlog, not ops work. Permanent fix plus a regression test — automating around it hides the defect.' },
+  { id: 'infra', label: 'Platform & infrastructure', auto: 0.60, tier: 'M', color: 'var(--info)',
+    re: /\bvm\b|server down|host down|hypervisor|openshift|kubernetes|node not ready|cluster|\bec2\b|instance (down|stopped)|autoscal|capacity add|provision (server|host)/,
+    fix: 'Platform-level auto-remediation: node replacement, autoscaling policies, declarative provisioning.' }
+];
+const FAM_OTHER = { id: 'other', label: 'Unclassified', auto: 0.35, tier: 'M', color: 'var(--muted)', fix: 'Read a few samples and tag it — unclassified volume is where hidden toil lives.' };
+
+/* The description decides the work type; category and close code only break ties.
+   Scoring beats first-match-wins — a close code of "Code Fix Deployed" should not
+   turn an application defect into change fallout. */
+function familyOf(primary, secondary) {
+  const a = String(primary || '').toLowerCase(), b = String(secondary || '').toLowerCase();
+  let best = null, bs = 0;
+  for (const f of FAMILIES) {
+    let sc = 0;
+    if (f.re.test(a)) sc += 2;
+    if (b && f.re.test(b)) sc += 1;
+    if (sc > bs) { bs = sc; best = f; }
+  }
+  return best || FAM_OTHER;
+}
+
+/* ---------- clustering: exact signature, then fuzzy merge of near-duplicates ---------- */
+function clusterIncidents() {
+  const inc = S.incidents;
+  const groups = new Map();
+  inc.forEach(x => {
+    x.nt = normText(x.short);
+    x.tok = tokenize(x.nt + ' ' + normText(x.category === '(none)' ? '' : x.category));
+    const key = x.nt || ('cat:' + x.category);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(x.i);
+  });
+
+  let keys = Array.from(groups.keys());
+  const reps = keys.map(k => {
+    const first = inc[groups.get(k)[0]];
+    return { key: k, tok: first.tok, n: groups.get(k).length };
+  });
+
+  // union-find over signature groups
+  const parent = reps.map((_, i) => i);
+  const find = a => { while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; };
+  const union = (a, b) => { a = find(a); b = find(b); if (a !== b) parent[b > a ? b : a] = b > a ? a : b; };
+
+  // only fuzzy-merge the busiest signatures; bounds the work on very large dumps
+  const order = reps.map((r, i) => i).sort((a, b) => reps[b].n - reps[a].n).slice(0, 2500);
+  const index = new Map();
+  const df = new Map();
+  order.forEach(i => reps[i].tok.forEach(t => bump(df, t)));
+  const rare = t => (df.get(t) || 0) <= Math.max(40, order.length * 0.2);
+  order.forEach(i => reps[i].tok.forEach(t => { if (!rare(t)) return; if (!index.has(t)) index.set(t, []); index.get(t).push(i); }));
+
+  const th = S.cfg.sim;
+  order.forEach(i => {
+    const cand = new Map();
+    reps[i].tok.forEach(t => {
+      const lst = index.get(t); if (!lst || lst.length > 600) return;
+      lst.forEach(j => { if (j !== i) bump(cand, j); });
+    });
+    cand.forEach((shared, j) => {
+      if (shared < 2) return;
+      if (find(i) === find(j)) return;
+      if (jaccard(reps[i].tok, reps[j].tok) >= th) union(i, j);
+    });
+  });
+
+  const rootToCid = new Map(); const clusters = [];
+  reps.forEach((r, i) => {
+    const root = find(i);
+    let cid = rootToCid.get(root);
+    if (cid == null) { cid = clusters.length; rootToCid.set(root, cid); clusters.push({ id: cid, members: [], sigs: [] }); }
+    clusters[cid].sigs.push(r.key);
+    groups.get(r.key).forEach(ix => { clusters[cid].members.push(ix); inc[ix].cid = cid; });
+  });
+  S.clusters = clusters;
+}
+
+/* ---------- per-view cluster statistics + scoring ---------- */
+function analyze(list) {
+  const cfg = S.cfg;
+  const byC = new Map();
+  list.forEach(x => { if (!byC.has(x.cid)) byC.set(x.cid, []); byC.get(x.cid).push(x); });
+
+  const dates = list.map(x => x.opened).filter(Boolean).sort((a, b) => a - b);
+  const spanDays = dates.length > 1 ? Math.max(1, (dates[dates.length - 1] - dates[0]) / 864e5) : 1;
+  const annualise = n => spanDays >= 25 ? n * 365 / spanDays : n;
+  const lastDate = dates.length ? dates[dates.length - 1] : null;
+  let maxN = 1; byC.forEach(v => { if (v.length > maxN) maxN = v.length; });
+
+  const out = [];
+  byC.forEach((mem, cid) => {
+    const mttrs = mem.map(x => x.mttr).filter(v => v != null && isFinite(v));
+    const p50 = median(mttrs), p90 = quant(mttrs, 0.9), avg = mean(mttrs);
+    const sd = mttrs.length > 1 ? Math.sqrt(mean(mttrs.map(v => (v - avg) * (v - avg)))) : 0;
+    const cv = avg > 0 ? sd / avg : 0;
+    const gm = new Map(), cm = new Map(), pm = new Map(), mm = new Map(), cc = new Map();
+    mem.forEach(x => { bump(gm, x.group); bump(cm, x.ci); bump(pm, x.prio); if (x.month) bump(mm, x.month); if (x.closeCode) bump(cc, x.closeCode); });
+    const label = (() => {
+      const c = new Map(); mem.forEach(x => bump(c, x.short));
+      return topN(c, 1)[0][0];
+    })();
+    const sigText = mem[0].nt || '(no signature)';
+    const fam = familyOf(label + ' ' + sigText, (mem[0].category || '') + ' ' + topStr(cc, 2));
+    const n = mem.length;
+    const opens = mem.map(x => x.opened).filter(Boolean).sort((a, b) => a - b);
+    const first = opens[0] || null, last = opens[opens.length - 1] || null;
+    const staleDays = (last && lastDate) ? (lastDate - last) / 864e5 : 0;
+
+    const touchH = clamp((p50 != null && isFinite(p50) ? p50 : 1) * cfg.handsOn, cfg.minTouch / 60, cfg.capTouch);
+    const annualN = annualise(n);
+    const annualH = annualN * touchH;
+    const reassignAvg = mean(mem.map(x => x.reassign)) || 0;
+    const reopenRate = mem.filter(x => x.reopen > 0).length / n;
+    const afterPct = mem.filter(x => x.after).length / n;
+    const p1p2 = mem.filter(x => x.prio <= 2).length / n;
+    const monthsActive = mm.size;
+
+    // --- toil score -------------------------------------------------
+    const rep = clamp(Math.log(n + 1) / Math.log(maxN + 1), 0, 1);
+    const persist = clamp(monthsActive / clamp(spanDays / 30, 1, 12), 0, 1);
+    const quick = !isFinite(p50) ? 0.5 : p50 <= 0.5 ? 1 : p50 <= 2 ? 0.85 : p50 <= 8 ? 0.55 : p50 <= 24 ? 0.3 : 0.12;
+    const predict = !isFinite(cv) ? 0.5 : cv <= 0.4 ? 1 : cv <= 0.8 ? 0.7 : cv <= 1.5 ? 0.4 : 0.2;
+    const lowChurn = clamp(1 - reassignAvg / 3, 0, 1) * 0.6 + clamp(1 - reopenRate * 4, 0, 1) * 0.4;
+    let toil = 100 * (0.30 * rep + 0.14 * persist + 0.18 * quick + 0.10 * predict + 0.18 * fam.auto + 0.10 * lowChurn);
+    if (n < 2) toil *= 0.3; else if (n < 4) toil *= 0.72;
+    if (staleDays > 90) toil *= 0.6;
+
+    // --- automation fit ---------------------------------------------
+    const oneOwner = gm.size === 1 ? 1 : gm.size <= 3 ? 0.6 : 0.3;
+    const fit = 100 * (0.42 * fam.auto + 0.22 * predict + 0.18 * quick + 0.10 * oneOwner + 0.08 * clamp(monthsActive / 6, 0, 1));
+
+    // --- effort & payback -------------------------------------------
+    let tier = fam.tier;
+    if (gm.size > 4 || cm.size > 14 || cv > 1.5) tier = tier === 'S' ? 'M' : 'L';
+    if (n >= 10 && fam.tier === 'S' && gm.size === 1) tier = 'S';
+    const buildH = cfg.build[tier];
+    const recoverH = annualH * fam.auto * cfg.autoEff;
+    const saving = recoverH * cfg.rate;
+    const payback = recoverH > 0 ? (buildH / (recoverH / 12)) : Infinity;
+
+    // --- what to actually do ----------------------------------------
+    const severe = (p1p2 > 0.4 && isFinite(p50) && p50 > 8) || reopenRate > 0.25;
+    let action, cls;
+    if (staleDays > 120 && n < 10) { action = 'Watch — stopped recurring'; cls = ''; }
+    else if (fam.id === 'noise' || (isFinite(p50) && p50 < 0.17 && n >= 8)) { action = 'Tune the alert'; cls = 'bad'; }
+    else if (fam.id === 'app' && n >= 3) { action = 'Engineering fix'; cls = 'prob'; }
+    else if (severe && fam.auto < 0.85) { action = 'Problem record — eliminate'; cls = 'prob'; }
+    else if (reassignAvg >= 2 && n >= 5) { action = 'Fix routing first'; cls = 'prob'; }
+    else if (fit >= 55 && n >= 4) { action = 'Automate'; cls = 'auto'; }
+    else if (severe) { action = 'Problem record — eliminate'; cls = 'prob'; }
+    else if (n >= 4 && toil >= 45) { action = 'Standardise runbook'; cls = 'toil'; }
+    else { action = 'Monitor'; cls = ''; }
+
+    out.push({
+      cid, label, sig: sigText, family: fam, n, annualN, members: mem,
+      p50, p90, cv, touchH, annualH, recoverH, saving, buildH, tier, payback,
+      groups: gm, cis: cm, prios: pm, months: mm, closeCodes: cc,
+      reassignAvg, reopenRate, afterPct, p1p2, monthsActive, first, last, staleDays,
+      toil: Math.round(toil), fit: Math.round(fit), action, cls
+    });
+  });
+
+  out.sort((a, b) => b.annualH - a.annualH);
+  return { clusters: out, spanDays, annualise, lastDate };
+}
+/* ============================================================
+   Charts (hand-rolled SVG), table renderer, exports
+   ============================================================ */
+
+/* labelled horizontal bar list — used for top groups / CIs / families */
+function barList(items, opt) {
+  opt = opt || {};
+  if (!items.length) return '<p class="hint">Nothing to show for the current filters.</p>';
+  const max = Math.max(1, ...items.map(d => d.v));
+  return '<div class="grid" style="gap:7px">' + items.map(d =>
+    '<div style="display:grid;grid-template-columns:minmax(90px,1fr) 2fr auto;gap:10px;align-items:center">' +
+    '<div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(d.k) + '">' + esc(d.k) + '</div>' +
+    '<div class="bar"><i style="width:' + ((d.v / max) * 100).toFixed(1) + '%;background:' + (d.c || 'var(--toil)') + '"></i></div>' +
+    '<div style="font-family:var(--mono);font-size:11.5px;color:var(--muted);min-width:52px;text-align:right">' + esc(d.t != null ? d.t : num(d.v)) + '</div>' +
+    '</div>').join('') + '</div>';
+}
+
+function svgLine(labels, series, opt) {
+  opt = opt || {};
+  const W = 720, H = opt.h || 200, pl = 44, pr = 12, pt = 12, pb = 26;
+  const iw = W - pl - pr, ih = H - pt - pb;
+  let max = 0; series.forEach(s => s.values.forEach(v => { if (isFinite(v) && v > max) max = v; }));
+  max = max || 1;
+  const nice = Math.pow(10, Math.floor(Math.log10(max)));
+  const step = Math.ceil(max / nice / 4) * nice;
+  const top = Math.max(step * 4, max);
+  const x = i => pl + (labels.length <= 1 ? iw / 2 : (i / (labels.length - 1)) * iw);
+  const y = v => pt + ih - (v / top) * ih;
+  let s = '<svg viewBox="0 0 ' + W + ' ' + H + '">';
+  for (let g = 0; g <= 4; g++) {
+    const v = top * g / 4;
+    s += '<line class="gl" x1="' + pl + '" y1="' + y(v).toFixed(1) + '" x2="' + (W - pr) + '" y2="' + y(v).toFixed(1) + '"/>';
+    s += '<text class="axtxt" x="' + (pl - 6) + '" y="' + (y(v) + 3).toFixed(1) + '" text-anchor="end">' + num(v) + '</text>';
+  }
+  const every = Math.ceil(labels.length / 12);
+  labels.forEach((l, i) => { if (i % every) return; s += '<text class="axtxt" x="' + x(i).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="middle">' + esc(l) + '</text>'; });
+  series.forEach(se => {
+    const pts = se.values.map((v, i) => x(i).toFixed(1) + ',' + y(isFinite(v) ? v : 0).toFixed(1));
+    if (se.area) s += '<polygon points="' + (pl + ',' + (pt + ih)) + ' ' + pts.join(' ') + ' ' + ((W - pr) + ',' + (pt + ih)) + '" fill="' + se.color + '" opacity=".10"/>';
+    s += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="' + se.color + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
+    se.values.forEach((v, i) => {
+      s += '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(isFinite(v) ? v : 0).toFixed(1) + '" r="2.6" fill="' + se.color + '"><title>' + esc(labels[i]) + ' — ' + esc(se.name) + ': ' + dec(v, 1) + '</title></circle>';
+    });
+  });
+  s += '</svg>';
+  return s;
+}
+
+function svgHeat(matrix, opt) {
+  opt = opt || {};
+  const W = 720, cell = 25, gap = 2, left = 38, top = 16;
+  const H = top + 7 * (cell * 0.72 + gap) + 8;
+  const ch = cell * 0.72;
+  const cw = (W - left - 6) / 24 - gap;
+  let max = 0; matrix.forEach(r => r.forEach(v => { if (v > max) max = v; })); max = max || 1;
+  let s = '<svg viewBox="0 0 ' + W + ' ' + H + '">';
+  for (let h = 0; h < 24; h += 3) s += '<text class="axtxt" x="' + (left + h * (cw + gap) + cw / 2) + '" y="10" text-anchor="middle">' + h + '</text>';
+  for (let d = 0; d < 7; d++) {
+    s += '<text class="axtxt" x="' + (left - 7) + '" y="' + (top + d * (ch + gap) + ch * 0.75) + '" text-anchor="end">' + DAYNAMES[d] + '</text>';
+    for (let h = 0; h < 24; h++) {
+      const v = matrix[d][h] || 0, a = v ? 0.12 + 0.88 * Math.pow(v / max, 0.6) : 0;
+      const off = (d === 0 || d === 6 || h < S.cfg.bhStart || h >= S.cfg.bhEnd);
+      s += '<rect x="' + (left + h * (cw + gap)).toFixed(1) + '" y="' + (top + d * (ch + gap)).toFixed(1) + '" width="' + cw.toFixed(1) + '" height="' + ch.toFixed(1) + '" rx="2" fill="' + (off ? 'var(--toil)' : 'var(--auto)') + '" opacity="' + a.toFixed(3) + '" stroke="var(--line)" stroke-width=".5"><title>' + DAYNAMES[d] + ' ' + h + ':00 — ' + v + ' incidents' + (off ? ' (outside business hours)' : '') + '</title></rect>';
+    }
+  }
+  s += '</svg>';
+  return s;
+}
+
+/* decision quadrant: how often vs how long, bubble = hours a year */
+function svgQuad(points) {
+  const W = 720, H = 340, pl = 52, pr = 14, pt = 14, pb = 40;
+  const iw = W - pl - pr, ih = H - pt - pb;
+  const maxN = Math.max(2, ...points.map(p => p.n));
+  const maxT = Math.max(0.5, ...points.map(p => isFinite(p.p50) ? p.p50 : 0.5));
+  const maxR = Math.max(1, ...points.map(p => p.annualH));
+  const lx = v => pl + (Math.log(v + 1) / Math.log(maxN + 1)) * iw;
+  const ly = v => pt + ih - (Math.log((isFinite(v) ? v : 0.1) + 0.2) / Math.log(maxT + 0.2)) * ih;
+  const midX = pl + iw * 0.42, midY = pt + ih * 0.5;
+  let s = '<svg viewBox="0 0 ' + W + ' ' + H + '">';
+  s += '<line class="gl" x1="' + midX + '" y1="' + pt + '" x2="' + midX + '" y2="' + (pt + ih) + '"/>';
+  s += '<line class="gl" x1="' + pl + '" y1="' + midY + '" x2="' + (W - pr) + '" y2="' + midY + '"/>';
+  const q = (x, y, t, anchor) => '<text class="axtxt" x="' + x + '" y="' + y + '" text-anchor="' + anchor + '" opacity=".75" style="font-size:9.5px;letter-spacing:.12em">' + t + '</text>';
+  s += q(W - pr - 4, pt + 12, 'ELIMINATE — RARE BUT SLOW', 'end');
+  s += q(pl + 4, pt + 12, 'WATCH', 'start');
+  s += q(W - pr - 4, pt + ih - 6, 'AUTOMATE FIRST', 'end');
+  s += q(pl + 4, pt + ih - 6, 'ACCEPT', 'start');
+  points.forEach(p => {
+    const r = 3 + 13 * Math.sqrt(p.annualH / maxR);
+    s += '<circle cx="' + lx(p.n).toFixed(1) + '" cy="' + ly(p.p50).toFixed(1) + '" r="' + r.toFixed(1) + '" fill="' + p.color + '" opacity=".55" stroke="' + p.color + '" stroke-width="1"><title>' + esc(p.label) + '\n' + p.n + ' incidents · median ' + hrs(p.p50) + ' · ' + num(p.annualH) + ' h/yr</title></circle>';
+  });
+  s += '<text class="axtxt" x="' + (pl + iw / 2) + '" y="' + (H - 8) + '" text-anchor="middle">how often it happens →</text>';
+  s += '<text class="axtxt" transform="translate(14,' + (pt + ih / 2) + ') rotate(-90)" text-anchor="middle">how long it takes →</text>';
+  s += '</svg>';
+  return s;
+}
+
+/* ---------- generic sortable table ---------- */
+function table(id, cols, rows, opt) {
+  opt = opt || {};
+  const st = S.sort[id] || (opt.sort ? { key: opt.sort, dir: -1 } : null);
+  let data = rows.slice();
+  if (st) {
+    const col = cols.find(c => c.k === st.key);
+    if (col) {
+      const val = col.sv || (r => r[st.key]);
+      data.sort((a, b) => {
+        const x = val(a), y = val(b);
+        if (!col.n && (typeof x === 'string' || typeof y === 'string')) return String(x).localeCompare(String(y)) * st.dir;
+        return ((isFinite(x) ? x : -Infinity) - (isFinite(y) ? y : -Infinity)) * st.dir;
+      });
+    }
+  }
+  const lim = S.limit[id] || opt.limit || 150;
+  const shown = data.slice(0, lim);
+  let h = '<div class="tw"><table data-table="' + id + '"><thead><tr>';
+  cols.forEach(c => {
+    const ar = st && st.key === c.k ? '<span class="ar">' + (st.dir === -1 ? '↓' : '↑') + '</span>' : '';
+    h += '<th class="' + (c.n ? 'num' : '') + '" data-k="' + c.k + '"' + (c.n ? ' data-num="1"' : '') + '>' + esc(c.label) + ' ' + ar + '</th>';
+  });
+  h += '</tr></thead><tbody>';
+  if (!shown.length) h += '<tr><td colspan="' + cols.length + '" style="color:var(--dim);padding:18px">No rows match the current filters.</td></tr>';
+  shown.forEach((r, i) => {
+    h += '<tr' + (opt.rowAttr ? ' ' + opt.rowAttr(r, i) : '') + '>';
+    cols.forEach(c => { h += '<td class="' + (c.cls || (c.n ? 'num' : '')) + '">' + (c.r ? c.r(r, i) : esc(r[c.k])) + '</td>'; });
+    h += '</tr>';
+    if (opt.sub && opt.sub(r)) h += '<tr class="sub-row"><td colspan="' + cols.length + '"><div class="sub-inner">' + opt.sub(r) + '</div></td></tr>';
+  });
+  h += '</tbody></table></div>';
+  if (data.length > shown.length) h += '<div style="padding:9px 12px;border-top:1px solid var(--line)"><button class="btn sm" data-more="' + id + '">Show 150 more (' + num(data.length - shown.length) + ' hidden)</button></div>';
+  return h;
+}
+
+/* ---------- exports ---------- */
+function csvCell(v) {
+  const s = v == null ? '' : String(v);
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function toCSV(headers, rows) {
+  return headers.map(csvCell).join(',') + '\r\n' + rows.map(r => r.map(csvCell).join(',')).join('\r\n');
+}
+function download(name, content, mime) {
+  const blob = content instanceof Blob ? content : new Blob(['\uFEFF' + content], { type: (mime || 'text/csv') + ';charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 800);
+  toast('Downloaded ' + name);
+}
+
+const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(u8) { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = CRC[(c ^ u8[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+
+/* store-only zip so a team can grab every report in one click */
+function makeZip(files) {
+  const enc = new TextEncoder(); const parts = []; const central = []; let off = 0;
+  files.forEach(f => {
+    const nb = enc.encode(f.name);
+    const data = typeof f.data === 'string' ? enc.encode(f.data) : f.data;
+    const crc = crc32(data);
+    const lh = new Uint8Array(30 + nb.length); const dv = new DataView(lh.buffer);
+    dv.setUint32(0, 0x04034b50, true); dv.setUint16(4, 20, true); dv.setUint16(6, 0x0800, true);
+    dv.setUint16(8, 0, true); dv.setUint16(10, 0, true); dv.setUint16(12, 0x2821, true);
+    dv.setUint32(14, crc, true); dv.setUint32(18, data.length, true); dv.setUint32(22, data.length, true);
+    dv.setUint16(26, nb.length, true); dv.setUint16(28, 0, true);
+    lh.set(nb, 30);
+    parts.push(lh, data);
+    const cd = new Uint8Array(46 + nb.length); const cv = new DataView(cd.buffer);
+    cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true);
+    cv.setUint16(8, 0x0800, true); cv.setUint16(10, 0, true); cv.setUint16(12, 0, true); cv.setUint16(14, 0x2821, true);
+    cv.setUint32(16, crc, true); cv.setUint32(20, data.length, true); cv.setUint32(24, data.length, true);
+    cv.setUint16(28, nb.length, true); cv.setUint32(42, off, true);
+    cd.set(nb, 46);
+    central.push(cd);
+    off += lh.length + data.length;
+  });
+  const cdSize = central.reduce((a, b) => a + b.length, 0);
+  const end = new Uint8Array(22); const ev = new DataView(end.buffer);
+  ev.setUint32(0, 0x06054b50, true); ev.setUint16(8, files.length, true); ev.setUint16(10, files.length, true);
+  ev.setUint32(12, cdSize, true); ev.setUint32(16, off, true);
+  return new Blob(parts.concat(central, [end]), { type: 'application/zip' });
+}
+const stamp = () => new Date().toISOString().slice(0, 10);
+/* ============================================================
+   Filters, aggregation, views
+   ============================================================ */
+
+let A = null; // current analysis over the filtered set
+
+const VIEWS = [
+  { k: 'overview', ico: '◎', label: 'Overview' },
+  { k: 'clusters', ico: '≡', label: 'Toil signatures' },
+  { k: 'backlog', ico: '⌁', label: 'Automation backlog' },
+  { k: 'problem', ico: '△', label: 'Problems & noise' },
+  { k: 'trends', ico: '∿', label: 'Trends' },
+  { k: 'teams', ico: '⊞', label: 'Teams & systems' },
+  { k: 'explorer', ico: '⌕', label: 'Incidents' },
+  { k: 'exports', ico: '↓', label: 'Downloads' },
+  { k: 'setup', ico: '⚙', label: 'Setup' }
+];
+
+/* ---------- filtering ---------- */
+function applyFilters() {
+  const f = S.filters;
+  const from = f.from ? parseDate(f.from) : null;
+  const to = f.to ? new Date(parseDate(f.to).getTime() + 864e5 - 1) : null;
+  const q = f.q.trim().toLowerCase();
+  const G = new Set(f.group), P = new Set(f.priority.map(Number)), C = new Set(f.category), ST = new Set(f.state);
+  return S.incidents.filter(x => {
+    if (from && (!x.opened || x.opened < from)) return false;
+    if (to && (!x.opened || x.opened > to)) return false;
+    if (G.size && !G.has(x.group)) return false;
+    if (P.size && !P.has(x.prio)) return false;
+    if (C.size && !C.has(x.category)) return false;
+    if (ST.size && !ST.has(x.state)) return false;
+    if (f.flag === 'after' && !x.after) return false;
+    if (f.flag === 'reopen' && !(x.reopen > 0)) return false;
+    if (f.flag === 'breach' && x.breached !== true) return false;
+    if (f.flag === 'open' && x.done) return false;
+    if (f.flag === 'p12' && x.prio > 2) return false;
+    if (q && !(x.short + ' ' + x.ci + ' ' + x.group + ' ' + x.id + ' ' + x.category + ' ' + x.closeCode).toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+function compute() {
+  const list = applyFilters();
+  const res = analyze(list);
+  const factor = res.spanDays >= 25 ? 365 / res.spanDays : 1;
+  const byCid = new Map();
+  res.clusters.forEach(c => {
+    byCid.set(c.cid, c);
+    c.members.forEach(x => { x.touchH = c.touchH; x.fam = c.family; x.toil = c.toil; x.fit = c.fit; x.action = c.action; x.clabel = c.label; });
+  });
+  A = { list, clusters: res.clusters, byCid, spanDays: res.spanDays, factor, lastDate: res.lastDate };
+  A.kpi = kpis();
+  return A;
+}
+
+function kpis() {
+  const L = A ? A.list : [];
+  const list = L.length ? L : [];
+  const mttrs = list.map(x => x.mttr).filter(v => v != null);
+  const touch = sum(list.map(x => x.touchH || 0));
+  const autoH = sum(list.map(x => (x.touchH || 0) * (x.fam ? x.fam.auto : 0.35) * S.cfg.autoEff));
+  const toilInc = list.filter(x => (x.toil || 0) >= 55).length;
+  return {
+    n: list.length,
+    resolved: list.filter(x => x.done).length,
+    p50: median(mttrs), p90: quant(mttrs, 0.9),
+    touchYr: touch * A.factor,
+    autoYr: autoH * A.factor,
+    savings: autoH * A.factor * S.cfg.rate,
+    toilShare: list.length ? toilInc / list.length : 0,
+    after: list.length ? list.filter(x => x.after).length / list.length : 0,
+    reopen: list.length ? list.filter(x => x.reopen > 0).length / list.length : 0,
+    breach: (() => { const k = list.filter(x => x.breached != null); return k.length ? k.filter(x => x.breached).length / k.length : null; })(),
+    repeat: (() => { const big = A.clusters.filter(c => c.n >= 4); return list.length ? sum(big.map(c => c.n)) / list.length : 0; })(),
+    sigs: A.clusters.length
+  };
+}
+
+/* ---------- aggregation helper ---------- */
+function aggBy(list, keyFn) {
+  const m = new Map();
+  list.forEach(x => {
+    const k = keyFn(x) || '(none)';
+    let o = m.get(k);
+    if (!o) { o = { k, n: 0, mttrs: [], touch: 0, auto: 0, after: 0, reopen: 0, breachN: 0, breachD: 0, reassign: 0, p12: 0, fams: new Map(), sigs: new Set() }; m.set(k, o); }
+    o.n++;
+    if (x.mttr != null) o.mttrs.push(x.mttr);
+    o.touch += x.touchH || 0;
+    o.auto += (x.touchH || 0) * (x.fam ? x.fam.auto : .35) * S.cfg.autoEff;
+    if (x.after) o.after++;
+    if (x.reopen > 0) o.reopen++;
+    if (x.breached != null) { o.breachD++; if (x.breached) o.breachN++; }
+    o.reassign += x.reassign || 0;
+    if (x.prio <= 2) o.p12++;
+    if (x.fam) bump(o.fams, x.fam.label);
+    o.sigs.add(x.cid);
+  });
+  const out = Array.from(m.values());
+  out.forEach(o => {
+    o.p50 = median(o.mttrs); o.p90 = quant(o.mttrs, 0.9);
+    o.touchYr = o.touch * A.factor; o.autoYr = o.auto * A.factor;
+    o.afterPct = o.after / o.n; o.reopenPct = o.reopen / o.n;
+    o.breachPct = o.breachD ? o.breachN / o.breachD : null;
+    o.reassignAvg = o.reassign / o.n;
+    o.topFam = topN(o.fams, 1)[0] ? topN(o.fams, 1)[0][0] : '—';
+    o.sigN = o.sigs.size;
+    o.repeatRatio = o.n / Math.max(1, o.sigN);
+  });
+  return out;
+}
+
+/* ---------- small view helpers ---------- */
+const kpi = (lbl, val, note, color) =>
+  '<div class="kpi" style="--k:' + (color || 'var(--ink)') + '"><div class="lbl">' + esc(lbl) + '</div><div class="val">' + val + '</div>' + (note ? '<div class="note">' + note + '</div>' : '') + '</div>';
+
+const card = (title, sub, body, right) =>
+  '<div class="card"><header><h3>' + esc(title) + '</h3>' + (sub ? '<span class="sub">' + esc(sub) + '</span>' : '') + (right ? '<div class="right">' + right + '</div>' : '') + '</header><div class="body">' + body + '</div></div>';
+
+const cardFlush = (title, sub, body, right) =>
+  '<div class="card"><header><h3>' + esc(title) + '</h3>' + (sub ? '<span class="sub">' + esc(sub) + '</span>' : '') + (right ? '<div class="right">' + right + '</div>' : '') + '</header>' + body + '</div>';
+
+const sigHTML = s => esc(s).replace(/&lt;(\w+)&gt;/g, '<span class="ph">&lt;$1&gt;</span>');
+const dlBtn = (key, label) => '<button class="btn sm" data-dl="' + key + '">' + esc(label || 'Download CSV') + '</button>';
+const scoreCell = v => '<span class="score" style="color:' + (v >= 70 ? 'var(--toil)' : v >= 45 ? 'var(--ink)' : 'var(--dim)') + '">' + Math.round(v) + '</span>';
+const ledger = c => {
+  const rec = c.recoverH, res = Math.max(0, c.annualH - c.recoverH);
+  const t = c.annualH || 1;
+  return '<div class="ledger" title="' + num(rec) + ' h/yr recoverable of ' + num(c.annualH) + ' h/yr"><i style="width:' + (rec / t * 100).toFixed(1) + '%;background:var(--auto)"></i><i style="width:' + (res / t * 100).toFixed(1) + '%;background:var(--toil);opacity:.55"></i></div>';
+};
+
+/* ============================================================
+   VIEW: overview
+   ============================================================ */
+function vOverview() {
+  const k = A.kpi, C = A.clusters;
+  const months = uniq(A.list.map(x => x.month).filter(Boolean)).sort();
+  const mCount = months.map(m => A.list.filter(x => x.month === m).length);
+  const mTouch = months.map(m => sum(A.list.filter(x => x.month === m).map(x => x.touchH || 0)));
+
+  const fams = new Map();
+  A.list.forEach(x => bump(fams, x.fam ? x.fam.label : 'Unclassified', (x.touchH || 0) * A.factor));
+  const famBars = topN(fams, 9).map(([kk, v]) => ({ k: kk, v, t: num(v) + ' h/yr', c: 'var(--toil)' }));
+
+  const grp = aggBy(A.list, x => x.group).sort((a, b) => b.touchYr - a.touchYr).slice(0, 8)
+    .map(o => ({ k: o.k, v: o.touchYr, t: num(o.touchYr) + ' h/yr', c: 'var(--info)' }));
+
+  const quad = C.slice(0, 90).map(c => ({ n: c.n, p50: c.p50, annualH: c.annualH, label: c.label, color: c.cls === 'auto' ? 'var(--auto)' : c.cls === 'prob' ? 'var(--prob)' : c.cls === 'bad' ? 'var(--bad)' : 'var(--toil)' }));
+
+  const top = C.slice(0, 6);
+  const spanTxt = Math.round(A.spanDays) + ' days of data' + (A.spanDays < 60 ? ' — annual figures are extrapolated from a short window' : '');
+
+  return '' +
+    '<h2>Where the hours are going</h2>' +
+    '<p class="lede">' + num(k.n) + ' incidents collapse into ' + num(k.sigs) + ' distinct signatures. ' +
+    'Everything below is scoped by the filters in the bar above, and every table can be downloaded.</p>' +
+
+    '<div class="grid g4" style="margin-bottom:12px">' +
+    kpi('Incidents in view', num(k.n), num(k.resolved) + ' resolved · ' + num(k.sigs) + ' signatures') +
+    kpi('Repeat work', pct(k.repeat), 'share in signatures seen 4+ times', 'var(--toil)') +
+    kpi('Hands-on hours / year', num(k.touchYr), 'at ' + Math.round(S.cfg.handsOn * 100) + '% of ticket duration') +
+    kpi('Recoverable by automation', num(k.autoYr) + ' <small>h/yr</small>', money(k.savings) + ' at ' + money(S.cfg.rate) + '/h', 'var(--auto)') +
+    '</div>' +
+
+    '<div class="grid g4" style="margin-bottom:16px">' +
+    kpi('Median time to resolve', hrs(k.p50), 'p90 ' + hrs(k.p90)) +
+    kpi('Raised outside hours', pct(k.after), 'before ' + S.cfg.bhStart + ':00, after ' + S.cfg.bhEnd + ':00, weekends', k.after > 0.3 ? 'var(--toil)' : 'var(--ink)') +
+    kpi('Reopened', pct(k.reopen), 'fix did not hold', k.reopen > 0.08 ? 'var(--bad)' : 'var(--ink)') +
+    kpi('SLA breached', k.breach == null ? '—' : pct(k.breach), k.breach == null ? 'no SLA column mapped' : 'of tickets with an SLA result', 'var(--bad)') +
+    '</div>' +
+
+    '<div class="grid g2" style="margin-bottom:12px">' +
+    card('The decision quadrant', spanTxt,
+      svgQuad(quad) +
+      '<div class="legend" style="margin-top:10px">' +
+      '<span><i class="dot" style="background:var(--auto)"></i> automate</span>' +
+      '<span><i class="dot" style="background:var(--prob)"></i> eliminate / engineering</span>' +
+      '<span><i class="dot" style="background:var(--bad)"></i> alert noise</span>' +
+      '<span><i class="dot" style="background:var(--toil)"></i> runbook</span>' +
+      '<span style="color:var(--dim)">bubble size = hours a year</span></div>') +
+    card('Monthly volume and effort', months.length + ' months',
+      svgLine(months, [
+        { name: 'Incidents', values: mCount, color: 'var(--info)', area: true },
+        { name: 'Hands-on hours', values: mTouch, color: 'var(--toil)' }
+      ], { h: 210 }) +
+      '<div class="legend" style="margin-top:8px"><span><i class="dot" style="background:var(--info)"></i> incidents</span><span><i class="dot" style="background:var(--toil)"></i> hands-on hours</span></div>') +
+    '</div>' +
+
+    '<div class="grid g2" style="margin-bottom:12px">' +
+    card('Hours a year by type of work', 'annualised', barList(famBars)) +
+    card('Hours a year by team', 'top 8', barList(grp)) +
+    '</div>' +
+
+    cardFlush('Start here — the six biggest repeat offenders', 'ranked by hours a year',
+      table('ov', [
+        { k: 'r', label: '#', n: true, r: (r, i) => '<span class="rank">' + String(i + 1).padStart(2, '0') + '</span>' },
+        { k: 'label', label: 'Signature', cls: 'wrap', r: r => '<div>' + esc(r.label) + '</div><div class="sig" style="margin-top:3px;font-size:10.5px">' + sigHTML(r.sig.slice(0, 120)) + '</div>' },
+        { k: 'fam', label: 'Type', r: r => '<span class="pill">' + esc(r.family.label) + '</span>', sv: r => r.family.label },
+        { k: 'n', label: 'Count', n: true, r: r => num(r.n) },
+        { k: 'p50', label: 'Median', n: true, r: r => hrs(r.p50) },
+        { k: 'annualH', label: 'h/yr', n: true, r: r => num(r.annualH) },
+        { k: 'action', label: 'Do this', r: r => '<span class="pill ' + r.cls + '">' + esc(r.action) + '</span>' }
+      ], top, { limit: 6 }),
+      dlBtn('clusters', 'Download all signatures')) ;
+}
+
+/* ============================================================
+   VIEW: toil signatures
+   ============================================================ */
+function vClusters() {
+  const rows = A.clusters.filter(c => c.n >= 1);
+  const cols = [
+    { k: 'exp', label: '', r: r => '<button class="btn sm expander" data-exp="' + r.cid + '">' + (S.expanded[r.cid] ? '−' : '+') + '</button>' },
+    { k: 'label', label: 'Signature', cls: 'wrap', r: r => '<div>' + esc(r.label) + '</div><div style="margin-top:3px;display:flex;gap:5px;flex-wrap:wrap"><span class="pill">' + esc(r.family.label) + '</span>' + (r.staleDays > 90 ? '<span class="pill">stale ' + Math.round(r.staleDays) + 'd</span>' : '') + (r.groups.size > 3 ? '<span class="pill">' + r.groups.size + ' teams</span>' : '') + '</div>' },
+    { k: 'n', label: 'Count', n: true, r: r => num(r.n) },
+    { k: 'monthsActive', label: 'Months', n: true, r: r => r.monthsActive },
+    { k: 'p50', label: 'Median', n: true, r: r => hrs(r.p50) },
+    { k: 'p90', label: 'p90', n: true, r: r => hrs(r.p90) },
+    { k: 'annualH', label: 'h/yr', n: true, r: r => '<div>' + num(r.annualH) + '</div>' + ledger(r) },
+    { k: 'toil', label: 'Toil', n: true, r: r => scoreCell(r.toil) },
+    { k: 'fit', label: 'Auto fit', n: true, r: r => scoreCell(r.fit) },
+    { k: 'afterPct', label: 'Off-hrs', n: true, r: r => pct(r.afterPct) },
+    { k: 'action', label: 'Do this', r: r => '<span class="pill ' + r.cls + '">' + esc(r.action) + '</span>' }
+  ];
+  const sub = r => {
+    if (!S.expanded[r.cid]) return '';
+    const samples = r.members.slice(0, 6);
+    const grps = topN(r.groups, 4).map(g => g[0] + ' (' + g[1] + ')').join(', ');
+    const cis = topN(r.cis, 5).map(g => g[0] + ' (' + g[1] + ')').join(', ');
+    const cc = topN(r.closeCodes, 3).map(g => g[0] + ' (' + g[1] + ')').join(', ');
+    return '<div class="grid g2" style="gap:14px">' +
+      '<div>' +
+      '<div class="eyebrow" style="margin-bottom:5px">Normalised signature</div>' +
+      '<div class="sigbox sig">' + sigHTML(r.sig) + '</div>' +
+      '<div class="eyebrow" style="margin:12px 0 5px">Recommended fix</div>' +
+      '<p style="margin:0;font-size:12.5px;color:var(--muted)">' + esc(r.family.fix) + '</p>' +
+      '<dl class="kv" style="margin-top:12px">' +
+      '<dt>Teams</dt><dd>' + esc(grps || '—') + '</dd>' +
+      '<dt>Systems</dt><dd>' + esc(cis || '—') + '</dd>' +
+      '<dt>Close codes</dt><dd>' + esc(cc || '—') + '</dd>' +
+      '<dt>First / last seen</dt><dd>' + (r.first ? ymd(r.first) : '—') + ' → ' + (r.last ? ymd(r.last) : '—') + '</dd>' +
+      '<dt>Reassignments</dt><dd>' + dec(r.reassignAvg, 1) + ' avg · ' + pct(r.reopenRate) + ' reopened</dd>' +
+      '<dt>Effort estimate</dt><dd>' + r.tier + ' · ~' + r.buildH + ' h build · payback ' + (isFinite(r.payback) ? dec(r.payback, 1) + ' months' : '—') + '</dd>' +
+      '</dl>' +
+      '<div class="split" style="margin-top:12px">' +
+      '<button class="btn sm" data-brief="' + r.cid + '">Download automation brief</button>' +
+      '<button class="btn sm" data-cluster-csv="' + r.cid + '">Download these ' + r.n + ' incidents</button>' +
+      '</div>' +
+      '</div>' +
+      '<div><div class="eyebrow" style="margin-bottom:5px">Sample incidents</div>' +
+      '<table style="font-size:11.5px"><tbody>' +
+      samples.map(x => '<tr><td class="mono">' + esc(x.id) + '</td><td class="mono">' + (x.opened ? ymd(x.opened) : '—') + '</td><td class="num">' + hrs(x.mttr) + '</td><td>' + esc(x.short.slice(0, 70)) + '</td></tr>').join('') +
+      '</tbody></table></div>' +
+      '</div>';
+  };
+  return '<h2>Toil signatures</h2>' +
+    '<p class="lede">Descriptions are normalised — hostnames, IDs, numbers and timestamps are masked — so tickets that describe the same work land in the same row even when the wording differs. Expand a row to see the signature, the sample tickets and a downloadable brief.</p>' +
+    '<div class="warn" style="margin-bottom:12px"><b>Toil score</b> rises with repetition, persistence across months, short and predictable handling time, and low reassignment. <b>Auto fit</b> is how mechanical the work is. High on both means build it this quarter.</div>' +
+    cardFlush('All signatures', num(rows.length) + ' groups', table('cl', cols, rows, { sort: 'annualH', sub: sub }), dlBtn('clusters') + dlBtn('briefs', 'Download all briefs (.zip)'));
+}
+
+/* ============================================================
+   VIEW: automation backlog
+   ============================================================ */
+function vBacklog() {
+  const rows = A.clusters.filter(c => c.n >= 3 && c.recoverH > 1 && c.fit >= 40 && c.family.id !== 'app')
+    .sort((a, b) => b.recoverH - a.recoverH);
+  const totalRec = sum(rows.map(r => r.recoverH));
+  const totalBuild = sum(rows.map(r => r.buildH));
+  const quick = rows.filter(r => r.payback <= 3).length;
+  const cols = [
+    { k: 'r', label: '#', n: true, r: (r, i) => '<span class="rank">' + String(i + 1).padStart(2, '0') + '</span>' },
+    { k: 'label', label: 'Candidate', cls: 'wrap', r: r => '<div>' + esc(r.label) + '</div><div class="sig" style="font-size:10.5px;margin-top:3px">' + esc(r.family.fix) + '</div>' },
+    { k: 'fam', label: 'Pattern', r: r => '<span class="pill auto">' + esc(r.family.label) + '</span>', sv: r => r.family.label },
+    { k: 'owner', label: 'Owner', r: r => esc(topN(r.groups, 1)[0][0]), sv: r => topN(r.groups, 1)[0][0] },
+    { k: 'annualN', label: 'Runs/yr', n: true, r: r => num(r.annualN) },
+    { k: 'recoverH', label: 'Hours back', n: true, r: r => '<b>' + num(r.recoverH) + '</b>' },
+    { k: 'saving', label: 'Value/yr', n: true, r: r => money(r.saving) },
+    { k: 'buildH', label: 'Build', n: true, r: r => r.tier + ' · ' + r.buildH + 'h' },
+    { k: 'payback', label: 'Payback', n: true, r: r => isFinite(r.payback) ? '<span style="color:' + (r.payback <= 3 ? 'var(--good)' : r.payback <= 9 ? 'var(--ink)' : 'var(--dim)') + '">' + dec(r.payback, 1) + ' mo</span>' : '—' },
+    { k: 'fit', label: 'Fit', n: true, r: r => scoreCell(r.fit) }
+  ];
+  return '<h2>Automation backlog</h2>' +
+    '<p class="lede">Ranked by hours returned per year, net of the fact that automation rarely removes 100% of the work (' + Math.round(S.cfg.autoEff * 100) + '% assumed). Build estimates come from the pattern and how messy the ownership is. Tune the numbers in Setup.</p>' +
+    '<div class="grid g4" style="margin-bottom:12px">' +
+    kpi('Candidates', num(rows.length), 'seen 3+ times, mechanical enough to build', 'var(--auto)') +
+    kpi('Hours returned / year', num(totalRec), money(totalRec * S.cfg.rate) + ' of capacity', 'var(--auto)') +
+    kpi('Estimated build effort', num(totalBuild) + ' <small>h</small>', dec(totalBuild / 160, 1) + ' engineer-months total') +
+    kpi('Pay back inside a quarter', num(quick), 'start with these', 'var(--good)') +
+    '</div>' +
+    cardFlush('Ranked candidates', 'highest return first', table('bk', cols, rows, { sort: 'recoverH' }),
+      dlBtn('backlog', 'Download backlog CSV') + dlBtn('jira', 'Download as work items') + dlBtn('briefs', 'Briefs (.zip)'));
+}
+
+/* ============================================================
+   VIEW: problems & noise
+   ============================================================ */
+function vProblem() {
+  const prob = A.clusters.filter(c => c.n >= 2 && (c.action.indexOf('Problem') === 0 || c.action === 'Engineering fix' || (c.p1p2 > 0.3 && c.annualH > 20)))
+    .sort((a, b) => b.annualH - a.annualH);
+  const noise = A.clusters.filter(c => c.family.id === 'noise' || (isFinite(c.p50) && c.p50 < 0.25 && c.n >= 5)).sort((a, b) => b.n - a.n);
+  const churn = A.clusters.filter(c => c.reassignAvg >= 1.5 && c.n >= 3).sort((a, b) => b.reassignAvg * b.n - a.reassignAvg * a.n);
+  const reop = A.clusters.filter(c => c.reopenRate > 0.1 && c.n >= 3).sort((a, b) => b.reopenRate * b.n - a.reopenRate * a.n);
+
+  const base = [
+    { k: 'label', label: 'Signature', cls: 'wrap', r: r => esc(r.label) },
+    { k: 'n', label: 'Count', n: true, r: r => num(r.n) },
+    { k: 'p50', label: 'Median', n: true, r: r => hrs(r.p50) },
+    { k: 'annualH', label: 'h/yr', n: true, r: r => num(r.annualH) }
+  ];
+  const probCols = base.concat([
+    { k: 'p1p2', label: 'P1/P2', n: true, r: r => pct(r.p1p2) },
+    { k: 'reopenRate', label: 'Reopened', n: true, r: r => pct(r.reopenRate) },
+    { k: 'owner', label: 'Owner', r: r => esc(topN(r.groups, 1)[0][0]), sv: r => topN(r.groups, 1)[0][0] }
+  ]);
+  const noiseCols = base.concat([
+    { k: 'ci', label: 'Top system', r: r => esc(topN(r.cis, 1)[0][0]), sv: r => topN(r.cis, 1)[0][0] },
+    { k: 'afterPct', label: 'Off-hrs', n: true, r: r => pct(r.afterPct) }
+  ]);
+  const churnCols = base.concat([
+    { k: 'reassignAvg', label: 'Hops', n: true, r: r => dec(r.reassignAvg, 1) },
+    { k: 'teams', label: 'Teams touched', n: true, r: r => r.groups.size, sv: r => r.groups.size }
+  ]);
+  const reopCols = base.concat([
+    { k: 'reopenRate', label: 'Reopened', n: true, r: r => pct(r.reopenRate) },
+    { k: 'owner', label: 'Owner', r: r => esc(topN(r.groups, 1)[0][0]), sv: r => topN(r.groups, 1)[0][0] }
+  ]);
+
+  const noiseInc = sum(noise.map(c => c.n));
+  const offNoise = sum(noise.map(c => c.n * c.afterPct));
+
+  return '<h2>Problems, noise and churn</h2>' +
+    '<p class="lede">Not everything repetitive should be automated. Some of it should stop happening. These four lists separate work that needs a permanent fix from work that is just interruption, and from tickets that bounce between teams before anyone starts.</p>' +
+    '<div class="grid g3" style="margin-bottom:12px">' +
+    kpi('Problem candidates', num(prob.length), 'recurring, severe or reopening — needs root cause', 'var(--prob)') +
+    kpi('Likely alert noise', num(noiseInc) + ' <small>tickets</small>', num(offNoise) + ' of them raised outside hours', 'var(--bad)') +
+    kpi('Signatures that bounce', num(churn.length), 'routing or ownership is wrong', 'var(--toil)') +
+    '</div>' +
+    cardFlush('Problem records to raise', 'high impact, repeating — automating around these hides the cause', table('pr', probCols, prob, { sort: 'annualH' }), dlBtn('problem')) +
+    '<div style="height:12px"></div>' +
+    cardFlush('Alert noise to tune out', 'closed almost immediately or explicitly no-action', table('nz', noiseCols, noise, { sort: 'n' }), dlBtn('noise')) +
+    '<div style="height:12px"></div>' +
+    '<div class="grid g2">' +
+    cardFlush('Routing churn', 'average hops before resolution', table('ch', churnCols, churn, { sort: 'reassignAvg', limit: 25 }), dlBtn('churn')) +
+    cardFlush('Fixes that did not hold', 'reopen rate above 10%', table('ro', reopCols, reop, { sort: 'reopenRate', limit: 25 }), dlBtn('reopen')) +
+    '</div>';
+}
+
+/* ============================================================
+   VIEW: trends
+   ============================================================ */
+function vTrends() {
+  const months = uniq(A.list.map(x => x.month).filter(Boolean)).sort();
+  const byM = m => A.list.filter(x => x.month === m);
+  const vol = months.map(m => byM(m).length);
+  const mtt = months.map(m => { const v = byM(m).map(x => x.mttr).filter(x => x != null); return v.length ? median(v) : 0; });
+  const aft = months.map(m => { const l = byM(m); return l.length ? l.filter(x => x.after).length / l.length * 100 : 0; });
+  const p12 = months.map(m => byM(m).filter(x => x.prio <= 2).length);
+
+  const heat = Array.from({ length: 7 }, () => new Array(24).fill(0));
+  A.list.forEach(x => { if (x.dow != null && x.hour != null) heat[x.dow][x.hour]++; });
+
+  // month over month movers by signature
+  const movers = [];
+  if (months.length >= 2) {
+    const last = months[months.length - 1], prev = months[months.length - 2];
+    A.clusters.forEach(c => {
+      const a = c.months.get(last) || 0, b = c.months.get(prev) || 0;
+      if (a + b >= 4) movers.push({ label: c.label, prev: b, last: a, delta: a - b, cid: c.cid, fam: c.family.label });
+    });
+    movers.sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
+  }
+  const moverCols = [
+    { k: 'label', label: 'Signature', cls: 'wrap', r: r => esc(r.label) },
+    { k: 'fam', label: 'Type', r: r => '<span class="pill">' + esc(r.fam) + '</span>' },
+    { k: 'prev', label: months[months.length - 2] || 'prev', n: true },
+    { k: 'last', label: months[months.length - 1] || 'last', n: true },
+    { k: 'delta', label: 'Change', n: true, r: r => '<span style="color:' + (r.delta > 0 ? 'var(--bad)' : 'var(--good)') + '">' + (r.delta > 0 ? '+' : '') + r.delta + '</span>' }
+  ];
+
+  const offCount = A.list.filter(x => x.after).length;
+  const weekend = A.list.filter(x => x.dow === 0 || x.dow === 6).length;
+
+  return '<h2>Trends</h2>' +
+    '<p class="lede">Volume tells you whether the work is growing. The clock heatmap tells you what it costs people to be on call for it.</p>' +
+    '<div class="grid g4" style="margin-bottom:12px">' +
+    kpi('Months covered', months.length, (months[0] || '—') + ' → ' + (months[months.length - 1] || '—')) +
+    kpi('Outside business hours', num(offCount), pct(offCount / Math.max(1, A.list.length)) + ' of all tickets', 'var(--toil)') +
+    kpi('Weekend tickets', num(weekend), pct(weekend / Math.max(1, A.list.length)) + ' of all tickets') +
+    kpi('Busiest hour', (() => { let bh = 0, bv = -1; for (let h = 0; h < 24; h++) { const v = sum(heat.map(r => r[h])); if (v > bv) { bv = v; bh = h; } } return bh + ':00'; })(), 'peak arrival time') +
+    '</div>' +
+    card('When incidents arrive', 'amber = outside your business hours', svgHeat(heat) +
+      '<p class="hint">Business hours are ' + S.cfg.bhStart + ':00–' + S.cfg.bhEnd + ':00, Monday to Friday. Change them in Setup.</p>') +
+    '<div style="height:12px"></div>' +
+    '<div class="grid g2">' +
+    card('Volume and severity by month', '', svgLine(months, [
+      { name: 'All incidents', values: vol, color: 'var(--info)', area: true },
+      { name: 'P1 + P2', values: p12, color: 'var(--bad)' }
+    ], { h: 200 })) +
+    card('Median resolve time and off-hours share', 'hours / percent', svgLine(months, [
+      { name: 'Median hours', values: mtt, color: 'var(--toil)' },
+      { name: 'Off-hours %', values: aft, color: 'var(--prob)' }
+    ], { h: 200 })) +
+    '</div>' +
+    '<div style="height:12px"></div>' +
+    cardFlush('What changed last month', 'signatures with the biggest swing', table('mv', moverCols, movers, { sort: 'delta', limit: 20 }), dlBtn('months', 'Download monthly CSV'));
+}
+
+/* ============================================================
+   VIEW: teams & systems
+   ============================================================ */
+function vTeams() {
+  const g = aggBy(A.list, x => x.group).sort((a, b) => b.touchYr - a.touchYr);
+  const c = aggBy(A.list, x => x.ci).sort((a, b) => b.touchYr - a.touchYr);
+  const cat = aggBy(A.list, x => x.category).sort((a, b) => b.n - a.n);
+  const cols = label => [
+    { k: 'k', label: label, cls: 'wrap', r: r => esc(r.k) },
+    { k: 'n', label: 'Tickets', n: true, r: r => num(r.n) },
+    { k: 'sigN', label: 'Signatures', n: true },
+    { k: 'repeatRatio', label: 'Repeat', n: true, r: r => dec(r.repeatRatio, 1) + '×' },
+    { k: 'p50', label: 'Median', n: true, r: r => hrs(r.p50) },
+    { k: 'p90', label: 'p90', n: true, r: r => hrs(r.p90) },
+    { k: 'touchYr', label: 'h/yr', n: true, r: r => num(r.touchYr) },
+    { k: 'autoYr', label: 'Automatable', n: true, r: r => '<span style="color:var(--auto)">' + num(r.autoYr) + '</span>' },
+    { k: 'afterPct', label: 'Off-hrs', n: true, r: r => pct(r.afterPct) },
+    { k: 'reopenPct', label: 'Reopened', n: true, r: r => pct(r.reopenPct) },
+    { k: 'reassignAvg', label: 'Hops', n: true, r: r => dec(r.reassignAvg, 1) },
+    { k: 'topFam', label: 'Mostly', r: r => '<span class="pill">' + esc(r.topFam) + '</span>' }
+  ];
+  return '<h2>Teams and systems</h2>' +
+    '<p class="lede">Repeat is tickets divided by distinct signatures — a high number means the same team keeps doing the same thing. That is the clearest signal of where an automation investment pays.</p>' +
+    cardFlush('By assignment group', num(g.length) + ' teams', table('tg', cols('Team'), g, { sort: 'touchYr' }), dlBtn('groups')) +
+    '<div style="height:12px"></div>' +
+    cardFlush('By configuration item / service', num(c.length) + ' systems', table('tc', cols('System'), c, { sort: 'touchYr' }), dlBtn('cis')) +
+    '<div style="height:12px"></div>' +
+    cardFlush('By category', num(cat.length) + ' categories', table('tk', cols('Category'), cat, { sort: 'n', limit: 30 }), dlBtn('categories'));
+}
+
+/* ============================================================
+   VIEW: incidents explorer
+   ============================================================ */
+function vExplorer() {
+  const cols = [
+    { k: 'id', label: 'Number', cls: 'mono' },
+    { k: 'opened', label: 'Opened', cls: 'mono', r: r => dstr(r.opened), sv: r => r.opened ? +r.opened : 0 },
+    { k: 'mttr', label: 'Resolve', n: true, r: r => hrs(r.mttr) },
+    { k: 'prio', label: 'Pri', n: true, r: r => '<span class="pill' + (r.prio <= 2 ? ' bad' : '') + '">' + (PRIO_LABEL[r.prio] || r.prio).split(' ')[0] + '</span>' },
+    { k: 'state', label: 'State' },
+    { k: 'group', label: 'Team', cls: 'wrap' },
+    { k: 'ci', label: 'System', cls: 'wrap' },
+    { k: 'short', label: 'Short description', cls: 'wrap', r: r => esc(r.short) },
+    { k: 'fam', label: 'Type', r: r => '<span class="pill">' + esc(r.fam ? r.fam.label : '—') + '</span>', sv: r => r.fam ? r.fam.label : '' },
+    { k: 'toil', label: 'Toil', n: true, r: r => scoreCell(r.toil || 0) },
+    { k: 'action', label: 'Do this', r: r => esc(r.action || '') },
+    { k: 'flags', label: 'Flags', r: r => [r.after ? '<span class="pill toil">off-hrs</span>' : '', r.reopen > 0 ? '<span class="pill bad">reopened</span>' : '', r.breached === true ? '<span class="pill bad">breach</span>' : '', r.reassign >= 3 ? '<span class="pill">' + r.reassign + ' hops</span>' : ''].join(' '), sv: r => (r.after ? 1 : 0) + (r.reopen > 0 ? 2 : 0) }
+  ];
+  return '<h2>Incidents</h2>' +
+    '<p class="lede">Every ticket in the current filter, enriched with its signature group, work type, toil score and recommended action. Download gives you the original columns plus everything ToilLens worked out.</p>' +
+    cardFlush('Filtered incidents', num(A.list.length) + ' rows', table('ex', cols, A.list, { sort: 'opened' }), dlBtn('incidents', 'Download enriched CSV'));
+}
+
+/* ============================================================
+   VIEW: downloads
+   ============================================================ */
+function vExports() {
+  const items = [
+    ['clusters', 'Toil signatures', 'Every signature group with counts, timings, scores and the recommended action.'],
+    ['backlog', 'Automation backlog', 'Ranked build candidates with hours returned, effort estimate and payback.'],
+    ['jira', 'Work items', 'The backlog shaped as importable tickets: summary, description, estimate, value.'],
+    ['problem', 'Problem candidates', 'Recurring high-impact signatures that need a root cause, not a script.'],
+    ['noise', 'Alert noise', 'Signatures that close instantly or resolve themselves — tune these out.'],
+    ['churn', 'Routing churn', 'Signatures that bounce between teams before anyone resolves them.'],
+    ['reopen', 'Reopened work', 'Signatures where the fix did not hold.'],
+    ['incidents', 'Enriched incidents', 'Your original rows plus signature, type, scores, flags and action.'],
+    ['months', 'Monthly summary', 'Volume, median resolve time, off-hours share and effort by month.'],
+    ['groups', 'By team', 'Per assignment group: volume, repeat ratio, hours, automatable hours.'],
+    ['cis', 'By system', 'Per configuration item: the same breakdown.'],
+    ['categories', 'By category', 'Per category rollup.'],
+    ['afterhours', 'Off-hours incidents', 'Everything raised outside business hours or at the weekend.'],
+    ['summary', 'Executive summary', 'A one-page markdown brief you can paste into a review deck.']
+  ];
+  return '<h2>Downloads</h2>' +
+    '<p class="lede">Every download respects the filters currently set in the bar above, so you can cut a list for one team, one quarter or one system and hand it straight over.</p>' +
+    '<div class="split" style="margin-bottom:14px">' +
+    '<button class="btn primary" data-dl="all">Download everything (.zip)</button>' +
+    '<button class="btn" data-dl="briefs">Automation briefs (.zip)</button>' +
+    '<span class="hint" style="margin:0">Scope: ' + num(A.list.length) + ' incidents · ' + num(A.clusters.length) + ' signatures</span>' +
+    '</div>' +
+    '<div class="grid g2">' + items.map(it =>
+      '<div class="card"><div class="body" style="display:flex;gap:12px;align-items:flex-start">' +
+      '<div style="flex:1"><b style="font-size:13px">' + esc(it[1]) + '</b><p style="margin:3px 0 0;color:var(--muted);font-size:12px">' + esc(it[2]) + '</p></div>' +
+      '<button class="btn sm" data-dl="' + it[0] + '">Download</button>' +
+      '</div></div>').join('') + '</div>';
+}
+
+/* ============================================================
+   VIEW: setup
+   ============================================================ */
+function vSetup() {
+  const opts = sel => '<option value="">— not mapped —</option>' + S.headers.map(h => '<option value="' + esc(h) + '"' + (sel === h ? ' selected' : '') + '>' + esc(h) + '</option>').join('');
+  const mapping = FIELDS.map(f =>
+    '<label class="fld">' + esc(f.label) + '<select data-map="' + f.k + '">' + opts(S.map[f.k]) + '</select></label>').join('');
+
+  const numFld = (k, label, val, min, max, step, note) =>
+    '<label class="fld">' + esc(label) + '<input type="number" data-cfg="' + k + '" value="' + val + '" min="' + min + '" max="' + max + '" step="' + step + '">' + (note ? '<span style="color:var(--dim);font-size:10.5px">' + esc(note) + '</span>' : '') + '</label>';
+
+  const famRows = FAMILIES.concat([FAM_OTHER]).map(f =>
+    '<tr><td><span class="pill">' + esc(f.label) + '</span></td><td class="num">' + Math.round(f.auto * 100) + '%</td><td>' + f.tier + ' · ' + S.cfg.build[f.tier] + 'h</td><td class="wrap" style="color:var(--muted)">' + esc(f.fix) + '</td></tr>').join('');
+
+  return '<h2>Setup</h2>' +
+    '<p class="lede">ToilLens guesses your column names on load. Fix anything it got wrong here, and set the cost assumptions so the hours and money columns reflect your team rather than a default.</p>' +
+    '<div class="grid g2" style="margin-bottom:12px">' +
+    card('Cost and effort model', 'drives every hours and value figure',
+      '<div class="mapgrid">' +
+      numFld('rate', 'Loaded cost per engineer hour', S.cfg.rate, 10, 500, 5, 'salary plus overhead') +
+      numFld('handsOn', 'Hands-on share of ticket duration', S.cfg.handsOn, 0.05, 1, 0.05, 'a 4h ticket is rarely 4h of work') +
+      numFld('minTouch', 'Minimum touch time (minutes)', S.cfg.minTouch, 1, 120, 1, 'even a one-click fix costs context switch') +
+      numFld('capTouch', 'Maximum touch time (hours)', S.cfg.capTouch, 1, 24, 1, 'caps long-running tickets') +
+      numFld('autoEff', 'Share of work automation actually removes', S.cfg.autoEff, 0.2, 1, 0.05, 'exceptions still need people') +
+      numFld('sim', 'Signature merge sensitivity', S.cfg.sim, 0.3, 0.95, 0.02, 'lower merges more aggressively') +
+      '</div><div class="split" style="margin-top:12px"><button class="btn primary" id="applyCfg">Apply and recalculate</button></div>') +
+    card('Working hours', 'defines what counts as an off-hours interruption',
+      '<div class="mapgrid">' +
+      numFld('bhStart', 'Business day starts', S.cfg.bhStart, 0, 23, 1, '') +
+      numFld('bhEnd', 'Business day ends', S.cfg.bhEnd, 1, 24, 1, '') +
+      numFld('buildS', 'Small build estimate (hours)', S.cfg.build.S, 4, 400, 4, '') +
+      numFld('buildM', 'Medium build estimate (hours)', S.cfg.build.M, 8, 600, 8, '') +
+      numFld('buildL', 'Large build estimate (hours)', S.cfg.build.L, 20, 2000, 10, '') +
+      '</div>' +
+      '<p class="hint">Weekends always count as off-hours. Timestamps are read in your browser timezone.</p>') +
+    '</div>' +
+    card('Column mapping', S.headers.length + ' columns found in the file',
+      '<div class="mapgrid">' + mapping + '</div>' +
+      '<div class="split" style="margin-top:12px"><button class="btn primary" id="applyMap">Apply mapping</button>' +
+      '<span class="hint" style="margin:0">Only short description and opened date are essential. More columns mean sharper analysis.</span></div>') +
+    '<div style="height:12px"></div>' +
+    cardFlush('Work types and what ToilLens assumes about them', 'automatability drives the backlog ranking',
+      '<div class="tw"><table><thead><tr><th>Type</th><th class="num">Automatable</th><th>Default effort</th><th>Recommended fix</th></tr></thead><tbody>' + famRows + '</tbody></table></div>');
+}
+/* ============================================================
+   Export builders
+   ============================================================ */
+const CLUSTER_COLS = ['Signature', 'Normalised signature', 'Work type', 'Incidents', 'Est. per year', 'Months active',
+  'First seen', 'Last seen', 'Median hours', 'P90 hours', 'Hands-on hours each', 'Hands-on hours per year',
+  'Recoverable hours per year', 'Value per year', 'Toil score', 'Automation fit', 'Effort tier', 'Build hours',
+  'Payback months', 'Avg reassignments', 'Reopen rate', 'Off-hours share', 'P1/P2 share', 'Teams', 'Systems',
+  'Close codes', 'Recommended action', 'Recommended fix'];
+
+const clusterRow = c => [c.label, c.sig, c.family.label, c.n, Math.round(c.annualN), c.monthsActive,
+  c.first ? ymd(c.first) : '', c.last ? ymd(c.last) : '', isFinite(c.p50) ? c.p50.toFixed(2) : '', isFinite(c.p90) ? c.p90.toFixed(2) : '',
+  c.touchH.toFixed(2), Math.round(c.annualH), Math.round(c.recoverH), Math.round(c.saving), c.toil, c.fit, c.tier, c.buildH,
+  isFinite(c.payback) ? c.payback.toFixed(1) : '', c.reassignAvg.toFixed(2), (c.reopenRate * 100).toFixed(1) + '%',
+  (c.afterPct * 100).toFixed(1) + '%', (c.p1p2 * 100).toFixed(1) + '%', topStr(c.groups, 4), topStr(c.cis, 4),
+  topStr(c.closeCodes, 3), c.action, c.family.fix];
+
+const AGG_COLS = ['Name', 'Incidents', 'Distinct signatures', 'Repeat ratio', 'Median hours', 'P90 hours',
+  'Hands-on hours per year', 'Automatable hours per year', 'Off-hours share', 'Reopen rate', 'SLA breach rate', 'Avg reassignments', 'Mostly'];
+const aggRow = o => [o.k, o.n, o.sigN, o.repeatRatio.toFixed(1), isFinite(o.p50) ? o.p50.toFixed(2) : '', isFinite(o.p90) ? o.p90.toFixed(2) : '',
+  Math.round(o.touchYr), Math.round(o.autoYr), (o.afterPct * 100).toFixed(1) + '%', (o.reopenPct * 100).toFixed(1) + '%',
+  o.breachPct == null ? '' : (o.breachPct * 100).toFixed(1) + '%', o.reassignAvg.toFixed(2), o.topFam];
+
+function incidentTable() {
+  const extra = ['Signature group', 'Normalised signature', 'Work type', 'Toil score', 'Automation fit',
+    'Recommended action', 'Hands-on hours', 'Resolve hours', 'Off hours', 'Month', 'Weekday', 'Hour'];
+  const headers = S.headers.concat(extra);
+  const rows = A.list.map(x => x.raw.slice(0, S.headers.length).concat([
+    x.clabel || '', x.nt || '', x.fam ? x.fam.label : '', x.toil || 0, x.fit || 0, x.action || '',
+    (x.touchH || 0).toFixed(2), x.mttr == null ? '' : x.mttr.toFixed(2), x.after ? 'yes' : 'no',
+    x.month, x.dow == null ? '' : DAYNAMES[x.dow], x.hour == null ? '' : x.hour
+  ]));
+  return { headers, rows };
+}
+
+function monthTable() {
+  const months = uniq(A.list.map(x => x.month).filter(Boolean)).sort();
+  const rows = months.map(m => {
+    const l = A.list.filter(x => x.month === m);
+    const v = l.map(x => x.mttr).filter(x => x != null);
+    return [m, l.length, l.filter(x => x.done).length, isFinite(median(v)) ? median(v).toFixed(2) : '',
+      isFinite(quant(v, 0.9)) ? quant(v, 0.9).toFixed(2) : '',
+      (l.filter(x => x.after).length / l.length * 100).toFixed(1) + '%',
+      (l.filter(x => x.reopen > 0).length / l.length * 100).toFixed(1) + '%',
+      l.filter(x => x.prio <= 2).length, Math.round(sum(l.map(x => x.touchH || 0))), uniq(l.map(x => x.cid)).length];
+  });
+  return { headers: ['Month', 'Incidents', 'Resolved', 'Median hours', 'P90 hours', 'Off-hours share', 'Reopen rate', 'P1+P2', 'Hands-on hours', 'Distinct signatures'], rows };
+}
+
+function briefMD(c) {
+  const L = [];
+  L.push('# Automation brief — ' + c.label);
+  L.push('');
+  L.push('_Generated by ToilLens on ' + stamp() + ' from ' + c.n + ' matching incidents._');
+  L.push('');
+  L.push('## Signature');
+  L.push('```');
+  L.push(c.sig);
+  L.push('```');
+  L.push('Placeholders such as `<host>`, `<n>` and `<date>` are the parts that vary between tickets. Everything else is constant, which is what makes this automatable.');
+  L.push('');
+  L.push('## Why it is on the list');
+  L.push('');
+  L.push('| Measure | Value |');
+  L.push('| --- | --- |');
+  L.push('| Occurrences in scope | ' + c.n + ' (about ' + Math.round(c.annualN) + ' a year) |');
+  L.push('| Active in | ' + c.monthsActive + ' distinct months |');
+  L.push('| Median resolve time | ' + hrs(c.p50) + ' (p90 ' + hrs(c.p90) + ') |');
+  L.push('| Hands-on time each | ' + hrs(c.touchH) + ' |');
+  L.push('| Hands-on hours a year | ' + Math.round(c.annualH) + ' |');
+  L.push('| Recoverable by automation | ' + Math.round(c.recoverH) + ' h/yr (' + money(c.saving) + ') |');
+  L.push('| Toil score / automation fit | ' + c.toil + ' / ' + c.fit + ' |');
+  L.push('| Raised outside business hours | ' + pct(c.afterPct) + ' |');
+  L.push('| Reopened | ' + pct(c.reopenRate) + ' · average ' + dec(c.reassignAvg, 1) + ' reassignments |');
+  L.push('| Build estimate | ' + c.tier + ', roughly ' + c.buildH + ' hours |');
+  L.push('| Payback | ' + (isFinite(c.payback) ? dec(c.payback, 1) + ' months' : 'n/a') + ' |');
+  L.push('');
+  L.push('## Who and what is involved');
+  L.push('');
+  L.push('- **Teams:** ' + (topStr(c.groups, 5) || 'not recorded'));
+  L.push('- **Systems:** ' + (topStr(c.cis, 6) || 'not recorded'));
+  L.push('- **Close codes:** ' + (topStr(c.closeCodes, 4) || 'not recorded'));
+  L.push('- **Priority mix:** ' + topN(c.prios, 5).map(p => (PRIO_LABEL[p[0]] || p[0]) + ': ' + p[1]).join(', '));
+  L.push('');
+  L.push('## Recommended approach');
+  L.push('');
+  L.push(c.family.fix);
+  L.push('');
+  L.push('## Suggested acceptance criteria');
+  L.push('');
+  L.push('- Detection fires from the same signal that raises the ticket today, not from the ticket itself.');
+  L.push('- The action is idempotent and safe to run twice.');
+  L.push('- A guard rail stops it after ' + (c.n >= 20 ? '3' : '2') + ' attempts in a rolling window and escalates to a human.');
+  L.push('- Every run writes back to the incident record so the audit trail survives.');
+  L.push('- Success measured as a drop in this signature below ' + Math.max(1, Math.round(c.n * 0.2)) + ' occurrences per equivalent period.');
+  if (c.family.id === 'app') L.push('- Note: this looks like a product defect. Automating the workaround will hide it — raise it with engineering as well.');
+  L.push('');
+  L.push('## Sample incidents');
+  L.push('');
+  L.push('| Number | Opened | Resolve | Team | Description |');
+  L.push('| --- | --- | --- | --- | --- |');
+  c.members.slice(0, 12).forEach(x => {
+    L.push('| ' + x.id + ' | ' + (x.opened ? ymd(x.opened) : '') + ' | ' + hrs(x.mttr) + ' | ' + x.group + ' | ' + String(x.short).replace(/\|/g, '/').slice(0, 90) + ' |');
+  });
+  L.push('');
+  return L.join('\n');
+}
+
+function summaryMD() {
+  const k = A.kpi;
+  const back = A.clusters.filter(c => c.n >= 3 && c.recoverH > 1 && c.fit >= 40 && c.family.id !== 'app').sort((a, b) => b.recoverH - a.recoverH);
+  const L = [];
+  L.push('# Incident and toil review — ' + stamp());
+  L.push('');
+  L.push('Scope: **' + num(k.n) + ' incidents** across ' + Math.round(A.spanDays) + ' days, collapsing into **' + num(k.sigs) + ' distinct signatures**.');
+  L.push('');
+  L.push('## Headline');
+  L.push('');
+  L.push('- **' + pct(k.repeat) + '** of tickets are repeat work — a signature seen four or more times.');
+  L.push('- Hands-on effort runs at about **' + num(k.touchYr) + ' hours a year** (' + dec(k.touchYr / 1600, 1) + ' full-time engineers).');
+  L.push('- Roughly **' + num(k.autoYr) + ' hours a year** (' + money(k.savings) + ') is recoverable through automation.');
+  L.push('- **' + pct(k.after) + '** of incidents arrive outside business hours.');
+  L.push('- Median time to resolve is **' + hrs(k.p50) + '**, p90 **' + hrs(k.p90) + '**.');
+  if (k.reopen > 0.05) L.push('- **' + pct(k.reopen) + '** of tickets were reopened — fixes are not holding.');
+  L.push('');
+  L.push('## Top ten things to build');
+  L.push('');
+  L.push('| # | Candidate | Type | Runs/yr | Hours back | Value | Build | Payback |');
+  L.push('| --- | --- | --- | --- | --- | --- | --- | --- |');
+  back.slice(0, 10).forEach((c, i) => {
+    L.push('| ' + (i + 1) + ' | ' + String(c.label).replace(/\|/g, '/').slice(0, 70) + ' | ' + c.family.label + ' | ' + Math.round(c.annualN) +
+      ' | ' + Math.round(c.recoverH) + ' h | ' + money(c.saving) + ' | ' + c.tier + ' (' + c.buildH + 'h) | ' +
+      (isFinite(c.payback) ? dec(c.payback, 1) + ' mo' : '—') + ' |');
+  });
+  L.push('');
+  const prob = A.clusters.filter(c => c.action.indexOf('Problem') === 0 || c.action === 'Engineering fix').sort((a, b) => b.annualH - a.annualH).slice(0, 5);
+  if (prob.length) {
+    L.push('## Raise as problem records instead of automating');
+    L.push('');
+    prob.forEach(c => L.push('- **' + String(c.label).slice(0, 80) + '** — ' + c.n + ' incidents, median ' + hrs(c.p50) + ', ' + pct(c.reopenRate) + ' reopened. ' + c.family.fix));
+    L.push('');
+  }
+  const g = aggBy(A.list, x => x.group).sort((a, b) => b.touchYr - a.touchYr).slice(0, 5);
+  L.push('## Where the load sits');
+  L.push('');
+  L.push('| Team | Tickets | Repeat | Hours/yr | Automatable | Off-hours |');
+  L.push('| --- | --- | --- | --- | --- | --- |');
+  g.forEach(o => L.push('| ' + o.k + ' | ' + o.n + ' | ' + dec(o.repeatRatio, 1) + '× | ' + Math.round(o.touchYr) + ' | ' + Math.round(o.autoYr) + ' | ' + pct(o.afterPct) + ' |'));
+  L.push('');
+  L.push('---');
+  L.push('');
+  L.push('Assumptions: hands-on time is ' + Math.round(S.cfg.handsOn * 100) + '% of ticket duration (floor ' + S.cfg.minTouch + ' min, cap ' + S.cfg.capTouch + ' h); engineer cost ' + money(S.cfg.rate) + '/hour; automation removes ' + Math.round(S.cfg.autoEff * 100) + '% of the work it covers. Change these in Setup and regenerate.');
+  return L.join('\n');
+}
+
+function buildExport(key) {
+  const C = A.clusters;
+  const pick = list => ({ headers: CLUSTER_COLS, rows: list.map(clusterRow) });
+  switch (key) {
+    case 'clusters': return { name: 'toil-signatures', t: pick(C) };
+    case 'backlog': return { name: 'automation-backlog', t: pick(C.filter(c => c.n >= 3 && c.recoverH > 1 && c.fit >= 40 && c.family.id !== 'app').sort((a, b) => b.recoverH - a.recoverH)) };
+    case 'problem': return { name: 'problem-candidates', t: pick(C.filter(c => c.n >= 2 && (c.action.indexOf('Problem') === 0 || c.action === 'Engineering fix' || (c.p1p2 > 0.3 && c.annualH > 20))).sort((a, b) => b.annualH - a.annualH)) };
+    case 'noise': return { name: 'alert-noise', t: pick(C.filter(c => c.family.id === 'noise' || (isFinite(c.p50) && c.p50 < 0.25 && c.n >= 5)).sort((a, b) => b.n - a.n)) };
+    case 'churn': return { name: 'routing-churn', t: pick(C.filter(c => c.reassignAvg >= 1.5 && c.n >= 3).sort((a, b) => b.reassignAvg - a.reassignAvg)) };
+    case 'reopen': return { name: 'reopened-work', t: pick(C.filter(c => c.reopenRate > 0.1 && c.n >= 3).sort((a, b) => b.reopenRate - a.reopenRate)) };
+    case 'incidents': return { name: 'incidents-enriched', t: incidentTable() };
+    case 'months': return { name: 'by-month', t: monthTable() };
+    case 'groups': return { name: 'by-team', t: { headers: AGG_COLS, rows: aggBy(A.list, x => x.group).sort((a, b) => b.touchYr - a.touchYr).map(aggRow) } };
+    case 'cis': return { name: 'by-system', t: { headers: AGG_COLS, rows: aggBy(A.list, x => x.ci).sort((a, b) => b.touchYr - a.touchYr).map(aggRow) } };
+    case 'categories': return { name: 'by-category', t: { headers: AGG_COLS, rows: aggBy(A.list, x => x.category).sort((a, b) => b.n - a.n).map(aggRow) } };
+    case 'afterhours': {
+      const saved = A.list; A.list = saved.filter(x => x.after);
+      const t = incidentTable(); A.list = saved;
+      return { name: 'off-hours-incidents', t };
+    }
+    case 'jira': {
+      const rows = A.clusters.filter(c => c.n >= 3 && c.recoverH > 1 && c.fit >= 40 && c.family.id !== 'app').sort((a, b) => b.recoverH - a.recoverH).map((c, i) => [
+        'Automate: ' + String(c.label).slice(0, 90),
+        'Story',
+        'Recurring work seen ' + c.n + ' times in scope (about ' + Math.round(c.annualN) + ' a year), median resolve ' + hrs(c.p50) + '. ' +
+        c.family.fix + ' Signature: ' + c.sig,
+        c.buildH, Math.round(c.recoverH), Math.round(c.saving),
+        isFinite(c.payback) ? c.payback.toFixed(1) : '', top1(c.groups), top1(c.cis),
+        'toil-reduction,' + c.family.id, c.p1p2 > 0.3 ? 'High' : i < 10 ? 'Medium' : 'Low'
+      ]);
+      return { name: 'automation-work-items', t: { headers: ['Summary', 'Issue Type', 'Description', 'Estimate (hours)', 'Value (hours/yr)', 'Value ($/yr)', 'Payback (months)', 'Component', 'System', 'Labels', 'Priority'], rows } };
+    }
+  }
+  return null;
+}
+
+function doDownload(key) {
+  if (!A) return toast('Load a CSV first');
+  if (key === 'summary') return download('toillens-summary-' + stamp() + '.md', summaryMD(), 'text/markdown');
+  if (key === 'briefs') {
+    const list = A.clusters.filter(c => c.n >= 3).sort((a, b) => b.recoverH - a.recoverH).slice(0, 30);
+    if (!list.length) return toast('No signatures large enough for a brief');
+    const files = list.map((c, i) => ({ name: 'briefs/' + String(i + 1).padStart(2, '0') + '-' + c.family.id + '-' + c.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 46).replace(/-$/, '') + '.md', data: briefMD(c) }));
+    files.push({ name: 'briefs/00-summary.md', data: summaryMD() });
+    return download('toillens-briefs-' + stamp() + '.zip', makeZip(files));
+  }
+  if (key === 'all') {
+    const keys = ['clusters', 'backlog', 'jira', 'problem', 'noise', 'churn', 'reopen', 'incidents', 'months', 'groups', 'cis', 'categories', 'afterhours'];
+    const files = keys.map(k => { const e = buildExport(k); return { name: e.name + '.csv', data: '\uFEFF' + toCSV(e.t.headers, e.t.rows) }; });
+    files.push({ name: 'summary.md', data: summaryMD() });
+    A.clusters.filter(c => c.n >= 3).sort((a, b) => b.recoverH - a.recoverH).slice(0, 20)
+      .forEach((c, i) => files.push({ name: 'briefs/' + String(i + 1).padStart(2, '0') + '-' + c.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 46).replace(/-$/, '') + '.md', data: briefMD(c) }));
+    return download('toillens-' + stamp() + '.zip', makeZip(files));
+  }
+  const e = buildExport(key);
+  if (!e) return;
+  download('toillens-' + e.name + '-' + stamp() + '.csv', toCSV(e.t.headers, e.t.rows));
+}
+
+/* ============================================================
+   Filter bar
+   ============================================================ */
+function msBlock(key, label, items) {
+  const sel = S.filters[key];
+  return '<div class="ms" data-ms="' + key + '"><button type="button"><span>' + esc(label) + '</span>' +
+    '<span class="n" data-n>' + (sel.length ? sel.length : 'all') + '</span><span class="cv">▾</span></button>' +
+    '<div class="ms-menu"><input type="search" placeholder="Filter ' + esc(label.toLowerCase()) + '…" data-mssearch>' +
+    '<div class="ms-list">' + items.map(it =>
+      '<label><input type="checkbox" value="' + esc(it.v) + '"' + (sel.indexOf(it.v) >= 0 ? ' checked' : '') + '><span>' + esc(it.l) + '</span><span class="ct">' + it.n + '</span></label>').join('') +
+    '</div><div class="row"><button class="btn sm" data-msall>Select all</button><button class="btn sm" data-msnone>Clear</button></div></div></div>';
+}
+
+function renderTopbar() {
+  if (!S.incidents.length) { $('#topbar').innerHTML = ''; return; }
+  const cnt = f => { const m = new Map(); S.incidents.forEach(x => bump(m, f(x))); return Array.from(m.entries()).sort((a, b) => b[1] - a[1]); };
+  const dates = S.incidents.map(x => x.opened).filter(Boolean).sort((a, b) => a - b);
+  const min = dates.length ? ymd(dates[0]) : '', max = dates.length ? ymd(dates[dates.length - 1]) : '';
+  $('#topbar').innerHTML =
+    '<input type="search" id="q" placeholder="Search description, system, team, number…" value="' + esc(S.filters.q) + '" style="min-width:230px;flex:1;max-width:340px">' +
+    '<input type="date" id="from" value="' + esc(S.filters.from || min) + '" title="From">' +
+    '<input type="date" id="to" value="' + esc(S.filters.to || max) + '" title="To">' +
+    msBlock('group', 'Team', cnt(x => x.group).map(e => ({ v: e[0], l: e[0], n: e[1] }))) +
+    msBlock('priority', 'Priority', cnt(x => x.prio).sort((a, b) => a[0] - b[0]).map(e => ({ v: String(e[0]), l: PRIO_LABEL[e[0]] || e[0], n: e[1] }))) +
+    msBlock('category', 'Category', cnt(x => x.category).map(e => ({ v: e[0], l: e[0], n: e[1] }))) +
+    msBlock('state', 'State', cnt(x => x.state).map(e => ({ v: e[0], l: e[0], n: e[1] }))) +
+    '<select id="flag"><option value="">Everything</option>' +
+    [['after', 'Outside business hours'], ['reopen', 'Reopened only'], ['breach', 'SLA breached only'], ['open', 'Still open'], ['p12', 'P1 and P2 only']]
+      .map(o => '<option value="' + o[0] + '"' + (S.filters.flag === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>' +
+    '<button class="btn ghost" id="reset">Reset filters</button>' +
+    '<span class="spacer"></span>' +
+    '<span class="pill" id="scope"></span>';
+  updateScope();
+}
+function updateScope() {
+  const el = $('#scope'); if (el && A) el.textContent = num(A.list.length) + ' of ' + num(S.incidents.length) + ' incidents';
+}
+
+/* ============================================================
+   Render
+   ============================================================ */
+function renderNav() {
+  $('#nav').innerHTML = VIEWS.map(v =>
+    '<button class="navbtn" data-view="' + v.k + '" aria-current="' + (S.view === v.k ? 'true' : 'false') + '">' +
+    '<span class="ico">' + v.ico + '</span><span>' + v.label + '</span><span class="tag" data-tag="' + v.k + '"></span></button>').join('');
+}
+
+function emptyState() {
+  return '<div class="empty"><h3>Drop a ServiceNow incident export here</h3>' +
+    '<p>A CSV with at least a short description and an opened date. ToilLens groups the tickets that describe the same work, scores them for toil, ranks what is worth automating and lets you download any slice of it. Nothing leaves your browser.</p>' +
+    '<div class="split" style="justify-content:center"><button class="btn primary" data-open>Choose a CSV file</button>' +
+    '<button class="btn" data-sample>Load sample data instead</button></div>' +
+    '<p class="hint">Recognised columns include number, opened, resolved, short description, priority, state, category, assignment group, configuration item, close code, reassignment count, reopen count and made SLA. Anything it misses you can map by hand in Setup.</p></div>';
+}
+
+function render() {
+  renderNav();
+  const host = $('#views');
+  if (!S.incidents.length) { host.innerHTML = '<div class="view on">' + emptyState() + '</div>'; return; }
+  compute();
+  const fn = { overview: vOverview, clusters: vClusters, backlog: vBacklog, problem: vProblem, trends: vTrends, teams: vTeams, explorer: vExplorer, exports: vExports, setup: vSetup }[S.view] || vOverview;
+  host.innerHTML = '<div class="view on">' + fn() + '</div>';
+  host.scrollTop = 0;
+  updateScope();
+  const tags = { clusters: num(A.clusters.length), explorer: num(A.list.length), backlog: num(A.clusters.filter(c => c.n >= 3 && c.recoverH > 1 && c.fit >= 40 && c.family.id !== 'app').length) };
+  Object.keys(tags).forEach(k => { const t = $('[data-tag="' + k + '"]'); if (t) t.textContent = tags[k]; });
+  $('#status').innerHTML = '<b>' + num(S.incidents.length) + '</b> incidents loaded<br><b>' + num(S.clusters.length) + '</b> signatures found<br>' + Math.round(A.spanDays) + ' days covered';
+}
+
+/* ============================================================
+   Data loading
+   ============================================================ */
+function ingest(text, name) {
+  const rows = parseCSV(text);
+  if (rows.length < 2) { toast('That file has no data rows'); return; }
+  S.headers = rows[0].map(h => String(h).trim());
+  S.rows = rows.slice(1).filter(r => r.length > 1);
+  S.map = autoMap(S.headers);
+  if (!S.map.shortDesc && !S.map.opened) {
+    toast('Could not find a description or date column — map them in Setup');
+    S.view = 'setup';
+  }
+  rebuild();
+  toast('Loaded ' + num(S.rows.length) + ' rows from ' + (name || 'file'));
+}
+
+function rebuild() {
+  buildIncidents();
+  clusterIncidents();
+  S.expanded = {}; S.limit = {};
+  renderTopbar();
+  render();
+}
+
+/* ---------- sample data ---------- */
+function sampleCSV() {
+  const groups = ['SRE-Platform', 'App Support - Loans', 'App Support - Payments', 'Database Ops', 'Network Ops', 'Middleware', 'Identity & Access', 'Cloud Engineering'];
+  const T = [
+    ['JBoss thread pool exhausted on {H} - restart required', 'Middleware', 'Restart Service', 2, 0.9, 34, 'Software'],
+    ['Disk space above 90% on /var/log on {H}', 'SRE-Platform', 'Cleared Space', 3, 0.5, 46, 'Hardware'],
+    ['Password reset request for user {U}', 'Identity & Access', 'Password Reset', 4, 0.4, 88, 'Inquiry'],
+    ['Batch job FIN_DAILY_POST_{N} failed - rerun required', 'App Support - Payments', 'Job Rerun', 3, 1.2, 41, 'Software'],
+    ['Kafka consumer lag on topic pay.settlement.{N}', 'Middleware', 'Restarted Consumer', 2, 1.6, 27, 'Software'],
+    ['SSL certificate expiring in {N} days on {H}', 'SRE-Platform', 'Certificate Renewed', 3, 3.5, 22, 'Software'],
+    ['Oracle blocking session on {H} - kill session requested', 'Database Ops', 'Session Killed', 2, 0.8, 25, 'Database'],
+    ['Apigee proxy returning 502 errors on loan-api-{N}', 'App Support - Loans', 'Config Corrected', 2, 2.4, 19, 'Software'],
+    ['Access request: add user {U} to AD group APP_SUPPORT', 'Identity & Access', 'Access Granted', 4, 6.0, 54, 'Inquiry'],
+    ['Pod CrashLoopBackOff in namespace payments on cluster {H}', 'Cloud Engineering', 'Restart Service', 2, 1.1, 30, 'Software'],
+    ['Dynatrace alert: response time degradation on Loan Origination API', 'App Support - Loans', 'Monitoring Tuned', 3, 0.2, 37, 'Software'],
+    ['AMQ queue depth threshold breached on QUEUE.PAYMENT.IN.{N}', 'Middleware', 'Consumer Restarted', 2, 0.7, 24, 'Software'],
+    ['Month-end reconciliation report extract required', 'App Support - Payments', 'Report Provided', 4, 4.5, 17, 'Inquiry'],
+    ['Network latency between DC and AWS VPC vpc-{N}', 'Network Ops', 'Vendor Resolved', 2, 8.5, 12, 'Network'],
+    ['NullPointerException in statement generation service', 'App Support - Loans', 'Code Fix Deployed', 2, 42, 14, 'Software'],
+    ['Account locked out for user {U} after failed logins', 'Identity & Access', 'Account Unlocked', 4, 0.3, 62, 'Inquiry'],
+    ['Tablespace {H} usage above threshold', 'Database Ops', 'Space Added', 3, 1.4, 21, 'Database'],
+    ['False positive alert from synthetic monitor on {H}', 'SRE-Platform', 'No Action Required', 4, 0.1, 44, 'Software'],
+    ['Payment file not received from partner sftp {H}', 'App Support - Payments', 'File Reprocessed', 2, 3.2, 23, 'Software'],
+    ['Post-deployment errors after release {N} on loan service', 'App Support - Loans', 'Rolled Back', 1, 6.5, 9, 'Software'],
+    ['Ansible tower job template failed - credential expired', 'SRE-Platform', 'Credential Rotated', 3, 1.0, 16, 'Software'],
+    ['Memory utilisation above 92% on {H}', 'SRE-Platform', 'Restart Service', 3, 1.3, 28, 'Hardware'],
+    ['User unable to access loan servicing portal from branch {N}', 'Network Ops', 'Connectivity Restored', 3, 2.1, 26, 'Network'],
+    ['Duplicate incident created by monitoring integration', 'SRE-Platform', 'Duplicate', 4, 0.1, 20, 'Inquiry'],
+    ['Interest calculation incorrect on account statement', 'App Support - Loans', 'Code Fix Deployed', 1, 61, 7, 'Software']
+  ];
+  const hosts = ['apppr-web01', 'apppr-web02', 'apppr-app03', 'dbpr-ora01', 'mwpr-jb04', 'ocp-prd-node07', 'aws-prd-ec2-11', 'apppr-bat02'];
+  const states = ['Closed', 'Resolved', 'Closed', 'Closed', 'In Progress'];
+  const rows = [];
+  const headers = ['Number', 'Opened', 'Resolved', 'Short description', 'Priority', 'State', 'Category', 'Assignment group',
+    'Configuration item', 'Close code', 'Reassignment count', 'Reopen count', 'Made SLA', 'Contact type', 'Assigned to'];
+  let n = 0;
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  T.forEach(t => {
+    const [tpl, grp, code, prio, baseH, count, cat] = t;
+    const total = Math.round(count * rnd(0.85, 1.15));
+    for (let i = 0; i < total; i++) {
+      const d = new Date(start.getTime() + Math.random() * (now - start));
+      // weight arrivals toward the working day, but keep a real off-hours tail
+      let h = Math.random() < 0.68 ? Math.floor(rnd(8, 18)) : Math.floor(rnd(0, 24));
+      d.setHours(h, Math.floor(rnd(0, 60)), 0, 0);
+      const dur = Math.max(0.05, baseH * rnd(0.5, 1.9));
+      const st = states[Math.floor(Math.random() * states.length)];
+      const res = st === 'In Progress' ? null : new Date(d.getTime() + dur * 36e5);
+      const host = hosts[Math.floor(Math.random() * hosts.length)];
+      const txt = tpl.replace('{H}', host).replace('{U}', 'u' + Math.floor(rnd(10000, 99999))).replace('{N}', String(Math.floor(rnd(1, 90))));
+      n++;
+      rows.push([
+        'INC' + String(1000000 + n),
+        ymd(d) + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':00',
+        res ? ymd(res) + ' ' + String(res.getHours()).padStart(2, '0') + ':' + String(res.getMinutes()).padStart(2, '0') + ':00' : '',
+        txt,
+        prio + ' - ' + (PRIO_LABEL[prio] || '').split(' ')[1],
+        st, cat,
+        Math.random() < 0.06 ? groups[Math.floor(Math.random() * groups.length)] : grp,
+        host,
+        res ? code : '',
+        String(Math.random() < 0.22 ? Math.floor(rnd(1, 4)) : 0),
+        String(Math.random() < (baseH > 20 ? 0.28 : 0.05) ? 1 : 0),
+        Math.random() < (dur > baseH * 1.4 ? 0.5 : 0.92) ? 'true' : 'false',
+        Math.random() < 0.5 ? 'Monitoring' : (Math.random() < 0.5 ? 'Phone' : 'Self-service'),
+        'agent' + Math.floor(rnd(1, 24))
+      ]);
+    }
+  });
+  rows.sort(() => Math.random() - 0.5);
+  return toCSV(headers, rows);
+}
+
+/* ============================================================
+   Events
+   ============================================================ */
+function wire() {
+  const fileEl = $('#file');
+  const openFile = () => fileEl.click();
+  $('#btnOpen').addEventListener('click', openFile);
+  $('#btnSample').addEventListener('click', () => ingest(sampleCSV(), 'sample-servicenow-export.csv'));
+  $('#btnTheme').addEventListener('click', () => {
+    const cur = document.documentElement.getAttribute('data-theme');
+    const nx = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', nx);
+    $('#btnTheme').textContent = nx === 'dark' ? 'Switch to light' : 'Switch to dark';
+  });
+  fileEl.addEventListener('change', e => {
+    const f = e.target.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = () => ingest(String(r.result), f.name);
+    r.onerror = () => toast('Could not read that file');
+    r.readAsText(f);
+    fileEl.value = '';
+  });
+
+  let dragN = 0;
+  const dz = $('#drop');
+  window.addEventListener('dragenter', e => { e.preventDefault(); dragN++; dz.classList.add('on'); });
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('dragleave', () => { if (--dragN <= 0) { dragN = 0; dz.classList.remove('on'); } });
+  window.addEventListener('drop', e => {
+    e.preventDefault(); dragN = 0; dz.classList.remove('on');
+    const f = e.dataTransfer.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = () => ingest(String(r.result), f.name);
+    r.readAsText(f);
+  });
+
+  document.addEventListener('click', e => {
+    const t = e.target;
+    const nav = t.closest('[data-view]');
+    if (nav) { S.view = nav.getAttribute('data-view'); render(); return; }
+    if (t.closest('[data-open]')) return openFile();
+    if (t.closest('[data-sample]')) return ingest(sampleCSV(), 'sample-servicenow-export.csv');
+    const dl = t.closest('[data-dl]'); if (dl) return doDownload(dl.getAttribute('data-dl'));
+    const ex = t.closest('[data-exp]'); if (ex) { const k = ex.getAttribute('data-exp'); S.expanded[k] = !S.expanded[k]; return render(); }
+    const br = t.closest('[data-brief]');
+    if (br) { const c = A.byCid.get(+br.getAttribute('data-brief')); return download('brief-' + c.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 50) + '.md', briefMD(c), 'text/markdown'); }
+    const cc = t.closest('[data-cluster-csv]');
+    if (cc) {
+      const c = A.byCid.get(+cc.getAttribute('data-cluster-csv'));
+      const saved = A.list; A.list = c.members; const tb = incidentTable(); A.list = saved;
+      return download('signature-' + c.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40) + '.csv', toCSV(tb.headers, tb.rows));
+    }
+    const more = t.closest('[data-more]'); if (more) { const k = more.getAttribute('data-more'); S.limit[k] = (S.limit[k] || 150) + 150; return render(); }
+    const th = t.closest('th[data-k]');
+    if (th) {
+      const id = th.closest('table').getAttribute('data-table'), k = th.getAttribute('data-k');
+      const cur = S.sort[id];
+      S.sort[id] = { key: k, dir: cur && cur.key === k ? -cur.dir : (th.hasAttribute('data-num') ? -1 : 1) };
+      return render();
+    }
+    const msb = t.closest('.ms>button');
+    if (msb) { const ms = msb.parentElement; $$('.ms').forEach(m => { if (m !== ms) m.classList.remove('open'); }); ms.classList.toggle('open'); return; }
+    if (!t.closest('.ms-menu')) $$('.ms').forEach(m => m.classList.remove('open'));
+    const all = t.closest('[data-msall]'), none = t.closest('[data-msnone]');
+    if (all || none) {
+      const ms = t.closest('.ms'), key = ms.getAttribute('data-ms');
+      const boxes = $$('input[type=checkbox]', ms).filter(b => b.parentElement.style.display !== 'none');
+      boxes.forEach(b => { b.checked = !!all; });
+      S.filters[key] = all ? boxes.map(b => b.value) : [];
+      $('[data-n]', ms).textContent = S.filters[key].length || 'all';
+      return render();
+    }
+    if (t.id === 'reset') {
+      S.filters = { from: '', to: '', group: [], priority: [], category: [], state: [], q: '', flag: '' };
+      renderTopbar(); return render();
+    }
+    if (t.id === 'applyCfg' || t.id === 'applyMap') {
+      $$('[data-cfg]').forEach(inp => {
+        const k = inp.getAttribute('data-cfg'), v = parseFloat(inp.value);
+        if (!isFinite(v)) return;
+        if (k === 'buildS') S.cfg.build.S = v; else if (k === 'buildM') S.cfg.build.M = v;
+        else if (k === 'buildL') S.cfg.build.L = v; else S.cfg[k] = v;
+      });
+      $$('[data-map]').forEach(sel => { const k = sel.getAttribute('data-map'); if (sel.value) S.map[k] = sel.value; else delete S.map[k]; });
+      rebuild(); toast('Recalculated'); return;
+    }
+  });
+
+  document.addEventListener('change', e => {
+    const t = e.target;
+    if (t.matches('.ms input[type=checkbox]')) {
+      const ms = t.closest('.ms'), key = ms.getAttribute('data-ms');
+      S.filters[key] = $$('input[type=checkbox]:checked', ms).map(b => b.value);
+      $('[data-n]', ms).textContent = S.filters[key].length || 'all';
+      return render();
+    }
+    if (t.id === 'from') { S.filters.from = t.value; return render(); }
+    if (t.id === 'to') { S.filters.to = t.value; return render(); }
+    if (t.id === 'flag') { S.filters.flag = t.value; return render(); }
+  });
+
+  let qt;
+  document.addEventListener('input', e => {
+    const t = e.target;
+    if (t.id === 'q') { clearTimeout(qt); qt = setTimeout(() => { S.filters.q = t.value; render(); }, 220); return; }
+    if (t.matches('[data-mssearch]')) {
+      const v = t.value.toLowerCase();
+      $$('label', t.parentElement).forEach(l => { l.style.display = l.textContent.toLowerCase().includes(v) ? '' : 'none'; });
+    }
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') $$('.ms').forEach(m => m.classList.remove('open'));
+  });
+}
+
+wire();
+render();
+
+</script>
+</body>
+</html>
