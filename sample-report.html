@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>payment-consumer — investigation</title>
+<style>
+  :root{
+    --ink:#17191E; --ink-soft:#4C4F57; --ink-faint:#7C7F87;
+    --paper:#EDEBE4; --card:#F8F7F2; --rule:#C7C4B8; --rule-soft:#DEDBD1;
+    --stamp:#9E2A2B; --traced:#1F4E5F; --pattern:#7C6A3E;
+    --sre:#2F6B4F; --app:#7A5C3A; --joint:#4A4A8F;
+    --crit:#9E2A2B; --high:#B4611A; --med:#7C6A3E; --low:#5C6068;
+    --serif:ui-serif,"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono","Cascadia Mono",Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
+       font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:900px;margin:0 auto;padding:32px 20px 96px}
+
+  /* ---- masthead ---- */
+  header{border-bottom:3px double var(--ink);padding-bottom:20px;margin-bottom:8px}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+           text-transform:uppercase;color:var(--ink-faint)}
+  h1{font-family:var(--serif);font-size:36px;line-height:1.1;margin:8px 0 4px;
+     font-weight:600;letter-spacing:-.01em}
+  .meta{font-family:var(--mono);font-size:12px;color:var(--ink-soft);
+        display:flex;gap:16px;flex-wrap:wrap;margin-top:10px}
+  .verdict{font-family:var(--serif);font-size:19px;line-height:1.5;
+           margin:22px 0 6px;padding-left:16px;border-left:4px solid var(--stamp)}
+
+  /* ---- lens strip ---- */
+  .lenses{margin:26px 0 8px;padding:14px 0;border-top:1px solid var(--rule);
+          border-bottom:1px solid var(--rule)}
+  .lens-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .lens{font-family:var(--mono);font-size:11px;padding:3px 8px;
+        border:1px solid var(--rule);border-radius:2px;background:var(--card)}
+  .lens.ran{border-color:var(--traced);color:var(--traced);font-weight:600}
+  .lens.skipped{color:var(--ink-faint);opacity:.7;text-decoration:line-through}
+
+  /* ---- controls ---- */
+  .controls{position:sticky;top:0;z-index:10;background:var(--paper);
+            padding:12px 0;border-bottom:1px solid var(--rule);margin-bottom:24px;
+            display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .controls .lbl{font-family:var(--mono);font-size:10px;letter-spacing:.12em;
+                 text-transform:uppercase;color:var(--ink-faint);margin-right:2px}
+  button.f{font-family:var(--mono);font-size:11px;padding:4px 10px;cursor:pointer;
+           border:1px solid var(--rule);background:var(--card);color:var(--ink-soft);
+           border-radius:2px}
+  button.f[aria-pressed="true"]{background:var(--ink);color:var(--paper);
+                                border-color:var(--ink)}
+  button.f:focus-visible{outline:2px solid var(--traced);outline-offset:2px}
+
+  /* ---- sections ---- */
+  h2{font-family:var(--serif);font-size:25px;margin:44px 0 4px;font-weight:600}
+  .sub{font-family:var(--mono);font-size:11px;color:var(--ink-faint);
+       letter-spacing:.1em;text-transform:uppercase;margin-bottom:16px}
+
+  /* ---- finding card: the spine is the signature ---- */
+  .find{display:grid;grid-template-columns:44px 1fr;background:var(--card);
+        border:1px solid var(--rule-soft);margin-bottom:14px;overflow:hidden}
+  .spine{border-right:1px solid var(--rule-soft);background:rgba(0,0,0,.025);
+         display:flex;flex-direction:column;align-items:center;
+         justify-content:flex-start;padding:12px 0;gap:10px}
+  .spine .id{font-family:var(--mono);font-size:10px;color:var(--ink-faint);
+             writing-mode:vertical-rl;transform:rotate(180deg);letter-spacing:.1em}
+  .stamp{font-family:var(--mono);font-size:8px;font-weight:700;letter-spacing:.06em;
+         border:1.5px solid var(--stamp);color:var(--stamp);padding:2px 3px;
+         border-radius:2px;transform:rotate(-8deg);writing-mode:vertical-rl;
+         opacity:.85}
+  .stamp.TRACED{border-color:var(--traced);color:var(--traced)}
+  .stamp.PATTERN{border-color:var(--pattern);color:var(--pattern)}
+  .body{padding:14px 18px 16px;min-width:0}
+  .find h3{font-family:var(--serif);font-size:19px;margin:0 0 8px;font-weight:600;
+           line-height:1.3}
+  .badges{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+  .b{font-family:var(--mono);font-size:10px;letter-spacing:.06em;padding:2px 7px;
+     border-radius:2px;text-transform:uppercase;border:1px solid currentColor}
+  .b.owner-sre{color:var(--sre)} .b.owner-app-team{color:var(--app)}
+  .b.owner-joint{color:var(--joint)}
+  .b.sev-critical{color:var(--crit);background:var(--crit);
+                  border-color:var(--crit);color:#F8F7F2}
+  .b.sev-high{color:var(--high)} .b.sev-medium{color:var(--med)}
+  .b.sev-low{color:var(--low)}
+  .b.lens{color:var(--ink-faint)}
+  .b.unverified{color:var(--pattern);border-style:dashed}
+  .where{font-family:var(--mono);font-size:12px;color:var(--traced);
+         margin-bottom:10px;word-break:break-all}
+  .why{margin:0 0 12px}
+  pre{font-family:var(--mono);font-size:12px;line-height:1.5;background:#22242A;
+      color:#E8E6DE;padding:12px 14px;overflow-x:auto;border-radius:3px;margin:0 0 12px}
+  dl.grid{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:0;
+          font-size:13.5px}
+  dl.grid dt{font-family:var(--mono);font-size:10px;letter-spacing:.1em;
+             text-transform:uppercase;color:var(--ink-faint);padding-top:4px}
+  dl.grid dd{margin:0}
+  .ev{margin-top:12px;padding-top:10px;border-top:1px dashed var(--rule-soft);
+      font-family:var(--mono);font-size:11.5px;color:var(--ink-soft)}
+
+  /* ---- simple lists ---- */
+  ul.plain{list-style:none;padding:0;margin:0}
+  ul.plain li{padding:10px 0 10px 16px;border-bottom:1px solid var(--rule-soft);
+              border-left:3px solid var(--rule);margin-bottom:0}
+  ul.plain li .r{display:block;font-size:13.5px;color:var(--ink-soft);margin-top:3px}
+  .empty{font-family:var(--mono);font-size:12px;color:var(--ink-faint);
+         padding:10px 0}
+  footer{margin-top:64px;padding-top:16px;border-top:1px solid var(--rule);
+         font-family:var(--mono);font-size:11px;color:var(--ink-faint)}
+  .hidden{display:none !important}
+
+  @media (max-width:560px){
+    h1{font-size:28px} .wrap{padding:20px 14px 64px}
+    .find{grid-template-columns:34px 1fr} .body{padding:12px 13px 14px}
+    dl.grid{grid-template-columns:1fr;gap:2px} dl.grid dt{padding-top:8px}
+  }
+  @media print{
+    body{background:#fff} .controls{display:none}
+    .find{break-inside:avoid;border-color:#999} pre{background:#f2f2f2;color:#111}
+  }
+  @media (prefers-reduced-motion:no-preference){
+    .find{animation:rise .28s ease-out both}
+    @keyframes rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Repository investigation</div>
+    <h1 id="repo"></h1>
+    <div class="meta" id="meta"></div>
+  </header>
+  <p class="verdict" id="verdict"></p>
+
+  <div class="lenses">
+    <div class="eyebrow">Lens coverage</div>
+    <div class="lens-row" id="lensrow"></div>
+  </div>
+
+  <div class="controls">
+    <span class="lbl">Filter</span>
+    <button class="f" data-k="all" aria-pressed="true">All</button>
+    <button class="f" data-k="owner:sre" aria-pressed="false">SRE can ship</button>
+    <button class="f" data-k="tier:quick-win" aria-pressed="false">Quick wins</button>
+    <button class="f" data-k="conf:CONFIRMED" aria-pressed="false">Confirmed</button>
+    <button class="f" data-k="sev:critical" aria-pressed="false">Critical</button>
+  </div>
+
+  <div id="tiers"></div>
+
+  <h2>Accepted risk</h2>
+  <div class="sub">Found, judged not worth fixing</div>
+  <ul class="plain" id="accepted"></ul>
+
+  <h2>Open questions</h2>
+  <div class="sub">Unresolved — needs a human</div>
+  <ul class="plain" id="questions"></ul>
+
+  <h2>Hypotheses killed</h2>
+  <div class="sub">Suspected, then ruled out</div>
+  <ul class="plain" id="killed"></ul>
+
+  <h2>Tool-catchable</h2>
+  <div class="sub">Run the existing tooling — not investigated here</div>
+  <ul class="plain" id="tools"></ul>
+
+  <footer>
+    Generated by repo-investigator. Every finding above carries an exhibit:
+    a cited path and line, plus a traced path, a reproduction, or telemetry.
+    Items marked <em>runtime-unverified</em> were not confirmed against production.
+  </footer>
+</div>
+
+<script id="payload" type="application/json">{"repo":"payment-consumer","investigated_at":"2026-08-26T14:00:00Z","verdict":"Healthy structurally, one serious problem. The consumer commits Kafka offsets before the DB write, so a pod restart mid-batch loses payment events silently.","runtime_correlation":"dynatrace","lenses":[{"id":3,"name":"Partial Failure","ran":true,"rationale":"Kafka consumer with DB side effects"},{"id":9,"name":"Boundary Integrity","ran":false,"rationale":"Internal topic only"}],"findings":[{"id":"F-001","title":"Set a read timeout on the bureau client","tier":"quick-win","owner":"sre","confidence":"CONFIRMED","severity":"high","lens":"Boundedness","where":[{"path":"src/main/java/BureauClient.java","line":34}],"why_now":"No read timeout, so a slow bureau response holds a worker thread indefinitely.","change":"bureau:\n  connect-timeout: 3s\n  read-timeout: 10s   # add","effort":"15 minutes","change_risk":"Genuinely slow calls now surface as timeouts.","verify":"dt.process.threads stops flatlining at max during the next slowdown.","rollback":"Remove the key; previous behaviour is the default.","evidence":[{"kind":"telemetry","detail":"P-2291 thread saturation 2026-07-14"}]},{"id":"F-002","title":"Commit Kafka offsets after the database write","tier":"sprint","owner":"app-team","confidence":"TRACED","severity":"critical","lens":"Partial Failure","where":[{"path":"src/main/java/PaymentConsumer.java","line":88}],"why_now":"A restart between commit and write loses the payment with no reconciliation.","verify":"kafka.consume and db.write span counts match over 7 days.","rollback":"Plain revert; no state change.","runtime_unverified":true,"evidence":[{"kind":"traced_path","detail":"poll():71 -> commitSync():88 -> repo.save():94"}]},{"id":"F-003","title":"Add read timeouts across integration clients","tier":"quick-win","owner":"app-team","confidence":"PATTERN","severity":"medium","lens":"Boundedness","where":[{"path":"integration/ApiClient.java","line":34}],"why_now":"Eleven clients share the shape found in F-001.","verify":"Grep returns zero clients without a read timeout.","instances":["integration/TitleClient.java:22","integration/DealerClient.java:51"]}],"accepted_risk":[{"item":"Legacy SOAP adapter uses a deprecated parser","reason":"Decommissioned next quarter; no untrusted input reaches it."}],"open_questions":[{"question":"Does anything consume the DLQ topic?","who":"Platform / Kafka team"}],"killed_hypotheses":[{"hypothesis":"Scheduler runs on all replicas","killed_by":"ShedLock present at Scheduler.java:19; verified 1 execution/hour in telemetry"}],"tool_catchable":["3 dependencies with known CVEs — run Snyk","Formatting drift — run spotless:apply"]}</script>
+<script>
+(function(){
+  var D = JSON.parse(document.getElementById('payload').textContent);
+  var esc = function(s){ var d=document.createElement('div'); d.textContent=(s==null?'':String(s)); return d.innerHTML; };
+
+  document.title = D.repo + ' — investigation';
+  document.getElementById('repo').textContent = D.repo || 'Repository';
+  document.getElementById('verdict').textContent = D.verdict || '';
+
+  var m = [];
+  if (D.investigated_at) m.push(esc(D.investigated_at.slice(0,10)));
+  m.push((D.findings||[]).length + ' findings');
+  m.push('runtime: ' + esc(D.runtime_correlation || 'not correlated'));
+  document.getElementById('meta').innerHTML = m.map(function(x){return '<span>'+x+'</span>';}).join('');
+
+  var lr = document.getElementById('lensrow');
+  (D.lenses||[]).forEach(function(l){
+    var s = document.createElement('span');
+    s.className = 'lens ' + (l.ran ? 'ran' : 'skipped');
+    s.textContent = l.name;
+    s.title = (l.ran ? 'Investigated: ' : 'Skipped: ') + (l.rationale||'');
+    lr.appendChild(s);
+  });
+
+  var TIERS = [
+    ['quick-win','Low-hanging fruit','Under an hour each — SRE-actionable first'],
+    ['sprint','This sprint','Contained, one owner each'],
+    ['structural','Structural','Needs a design decision or coordination'],
+    ['strategic','Strategic','Capability and process gaps']
+  ];
+  var OWNER_RANK = {'sre':0,'joint':1,'app-team':2};
+  var SEV_RANK = {'critical':0,'high':1,'medium':2,'low':3};
+
+  function card(f){
+    var el = document.createElement('article');
+    el.className = 'find';
+    el.dataset.owner = f.owner || '';
+    el.dataset.tier = f.tier || '';
+    el.dataset.conf = f.confidence || '';
+    el.dataset.sev = f.severity || '';
+
+    var where = (f.where||[]).map(function(w){
+      return esc(w.path) + (w.line ? ':' + esc(w.line) : '');
+    }).join('  ·  ');
+
+    var rows = [
+      ['Effort', f.effort], ['Change risk', f.change_risk],
+      ['Verify', f.verify], ['Rollback', f.rollback]
+    ].filter(function(r){ return r[1]; });
+
+    var ev = (f.evidence||[]).map(function(e){
+      return esc(e.kind) + ' — ' + esc(e.detail);
+    }).join('<br>');
+
+    el.innerHTML =
+      '<div class="spine">' +
+        '<span class="id">' + esc(f.id||'') + '</span>' +
+        '<span class="stamp ' + esc(f.confidence||'') + '">' + esc(f.confidence||'') + '</span>' +
+      '</div>' +
+      '<div class="body">' +
+        '<h3>' + esc(f.title) + '</h3>' +
+        '<div class="badges">' +
+          '<span class="b owner-' + esc(f.owner) + '">' + esc(f.owner) + '</span>' +
+          '<span class="b sev-' + esc(f.severity) + '">' + esc(f.severity) + '</span>' +
+          (f.lens ? '<span class="b lens">' + esc(f.lens) + '</span>' : '') +
+          (f.runtime_unverified ? '<span class="b unverified">runtime-unverified</span>' : '') +
+        '</div>' +
+        (where ? '<div class="where">' + where + '</div>' : '') +
+        (f.why_now ? '<p class="why">' + esc(f.why_now) + '</p>' : '') +
+        (f.change ? '<pre>' + esc(f.change) + '</pre>' : '') +
+        (rows.length ? '<dl class="grid">' + rows.map(function(r){
+          return '<dt>' + r[0] + '</dt><dd>' + esc(r[1]) + '</dd>';
+        }).join('') + '</dl>' : '') +
+        (ev ? '<div class="ev">' + ev + '</div>' : '') +
+        ((f.instances && f.instances.length) ?
+          '<div class="ev">' + f.instances.length + ' further instances: ' +
+          f.instances.map(esc).join(', ') + '</div>' : '') +
+      '</div>';
+    return el;
+  }
+
+  var host = document.getElementById('tiers');
+  TIERS.forEach(function(t){
+    var items = (D.findings||[]).filter(function(f){ return f.tier === t[0]; });
+    items.sort(function(a,b){
+      var o = (OWNER_RANK[a.owner]??9) - (OWNER_RANK[b.owner]??9);
+      return o || ((SEV_RANK[a.severity]??9) - (SEV_RANK[b.severity]??9));
+    });
+    var h = document.createElement('h2'); h.textContent = t[1];
+    var s = document.createElement('div'); s.className='sub'; s.textContent = t[2];
+    host.appendChild(h); host.appendChild(s);
+    if (!items.length){
+      var e = document.createElement('div'); e.className='empty';
+      e.textContent = 'None found.'; host.appendChild(e); return;
+    }
+    items.forEach(function(f){ host.appendChild(card(f)); });
+  });
+
+  function fill(id, arr, main, sub){
+    var ul = document.getElementById(id);
+    if (!arr || !arr.length){
+      ul.innerHTML = '<li class="empty">None recorded.</li>'; return;
+    }
+    ul.innerHTML = arr.map(function(x){
+      return '<li>' + esc(x[main]) + (x[sub] ? '<span class="r">' + esc(x[sub]) + '</span>' : '') + '</li>';
+    }).join('');
+  }
+  fill('accepted', D.accepted_risk, 'item', 'reason');
+  fill('questions', D.open_questions, 'question', 'who');
+  fill('killed', D.killed_hypotheses, 'hypothesis', 'killed_by');
+  var tools = (D.tool_catchable||[]).map(function(s){ return {item:s}; });
+  fill('tools', tools, 'item', '_');
+
+  var btns = Array.prototype.slice.call(document.querySelectorAll('button.f'));
+  btns.forEach(function(b){
+    b.addEventListener('click', function(){
+      btns.forEach(function(o){ o.setAttribute('aria-pressed', o===b ? 'true':'false'); });
+      var k = b.dataset.k;
+      document.querySelectorAll('.find').forEach(function(el){
+        var show = true;
+        if (k !== 'all'){
+          var p = k.split(':');
+          var map = {owner:'owner', tier:'tier', conf:'conf', sev:'sev'};
+          show = el.dataset[map[p[0]]] === p[1];
+        }
+        el.classList.toggle('hidden', !show);
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>
