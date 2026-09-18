@@ -1,0 +1,1852 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Toil Analyzer</title>
+<style>
+/* Toil Analyzer · Ally palette. Presentation only; all application hooks are unchanged. */
+:root{
+  --plum:#650360;--deep:#2a0426;--lime:#b6d43b;
+  --ink:#302335;--ink-2:#716576;--ink-3:#877d8c;
+  --line:#e9e3ec;--line-2:#d8cddd;
+  --tint:#f8f5f9;--tint-2:#f0e8f2;--tint-3:#dcc6df;
+  --lime-ink:#445214;--lime-tint:#f2f7df;
+  --bg:#f6f4f7;--surface:#fff;--rail:224px;--radius:10px;
+  --shadow:0 2px 6px #2a042603,0 10px 30px #2a042603;
+  --ease:cubic-bezier(.22,.68,.18,1);
+  font-family:Inter,"Segoe UI",system-ui,-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;
+  font-synthesis:none;color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.5}
+body{-webkit-font-smoothing:antialiased}
+a{color:var(--plum);text-underline-offset:3px}
+button,input,select,textarea{font:inherit;color:inherit}
+button,select,summary{touch-action:manipulation}
+button,input,select,textarea,a,summary{-webkit-tap-highlight-color:transparent}
+::selection{background:var(--tint-3);color:var(--deep)}
+:focus-visible{outline:2px solid var(--plum);outline-offset:3px}
+.num{font-variant-numeric:tabular-nums}
+h1,h2,h3{margin:0;font-weight:650;letter-spacing:-.025em}
+h1{font-size:27px;line-height:1.25}h2{font-size:21px;line-height:1.35}h3{font-size:14px;letter-spacing:-.012em}
+p{margin:0 0 10px}
+.muted{color:var(--ink-2)}.small{font-size:12px;line-height:1.55}
+.mono{font-family:ui-monospace,SFMono-Regular,Consolas,Menlo,monospace;font-size:12px}
+.hide{display:none!important}.grow{flex:1}
+
+/* Workspace */
+.app{display:grid;grid-template-columns:var(--rail) minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);height:100vh;height:100dvh;overflow:hidden}
+.rail{grid-row:1/3;display:flex;flex-direction:column;min-height:0;padding:29px 14px 22px;color:#fff;background:linear-gradient(164deg,#3a0c36 0%,var(--deep) 60%);border-right:1px solid #ffffff08}
+.brand{padding:0 9px 31px;font-size:20px;font-weight:650;letter-spacing:-.045em;white-space:nowrap}
+.brand::before{content:"";display:inline-block;vertical-align:-2px;width:6px;height:19px;border-radius:3px;background:var(--lime);margin-right:10px;box-shadow:7px 0 0 -2px #b6d43b55}
+.brand span{display:block;font-size:10px;font-weight:400;letter-spacing:.005em;color:#cab7c9;margin:8px 0 0 16px;white-space:normal}
+.nav{display:flex;flex-direction:column;gap:7px}
+.nav button{position:relative;display:flex;align-items:center;justify-content:flex-start;gap:11px;min-height:46px;padding:11px 13px;border:1px solid transparent;border-radius:10px;background:transparent;color:#cebbcf;font-size:13px;font-weight:500;text-align:left;cursor:pointer;transition:background .18s,color .18s,border-color .18s}
+.nav button::before{content:"";width:18px;height:18px;flex:0 0 18px;background:currentColor;opacity:.85;-webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat}
+.nav button:hover{background:#ffffff09;color:#fff}
+.nav button.on{background:#ffffff0e;border-color:#ffffff0d;color:#fff;box-shadow:inset 3px 0 var(--lime)}
+.nav button.on::before{color:var(--lime);opacity:1}
+.nav button:focus-visible{outline-color:var(--lime)}
+.nav .count{margin-left:auto;min-width:23px;padding:2px 6px;border-radius:6px;background:#ffffff0d;color:#e6dce7;font-size:10px;font-weight:500;text-align:center;font-variant-numeric:tabular-nums}
+.nav .count:empty{display:none}.nav button.on .count{color:var(--lime);background:#b6d43b13}
+.nav button[data-view="settings"]{margin-top:18px}
+.rail .foot{margin-top:auto;padding:24px 10px 0;font-size:11px;line-height:1.7;color:#b7a4b8}
+.rail .foot #modeText{padding-top:4px;max-width:162px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:6px;font-size:10px;font-weight:550;line-height:17px;background:var(--tint-2);color:var(--ink)}
+.chip.lime{background:var(--lime);color:var(--deep)}.chip.plum{background:var(--plum);color:#fff}
+.chip.line{background:transparent;border:1px solid var(--line-2)}
+.rail .chip.line{border-color:#ffffff25;color:#f0e8f2}
+.rail .chip::before{content:"";height:5px;width:5px;border-radius:50%;background:var(--lime)}
+.rail .chip.lime::before{background:var(--deep)}
+.topbar{display:flex;align-items:center;flex-wrap:wrap;gap:9px;min-height:77px;padding:17px 30px;border-bottom:1px solid var(--line);background:#ffffff;z-index:2;min-width:0}
+.topbar select{max-width:220px;min-width:0;font-size:12px}
+.topbar #teamSel{font-weight:600;background-color:var(--tint);border-color:var(--line)}
+.topbar #dataStatus{flex:1 1 200px;min-width:130px;max-width:460px;padding-left:4px;font-size:10.5px;line-height:1.55;overflow-wrap:anywhere}
+.topbar #dataSel{flex:0 1 170px}
+.topbar .btn{font-size:12px;padding:8px 13px;min-height:38px}
+.main{overflow:auto;min-width:0;min-height:0;padding:30px 32px 46px;scrollbar-gutter:stable;scroll-behavior:smooth}
+.view{max-width:1440px;margin:0 auto;min-width:0;animation:view-in .2s var(--ease) both}
+.view>.row.between:first-child{align-items:center;gap:12px 24px;margin-bottom:22px!important}
+.view>.row.between>span.muted{max-width:580px}
+#execSub{margin-top:7px;font-size:11.5px}
+#view-settings>h1{margin-bottom:24px!important}
+
+/* Inputs and actions */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:38px;border:1px solid var(--line-2);background:#fff;padding:8px 14px;border-radius:9px;font-size:12.5px;font-weight:550;line-height:1.4;cursor:pointer;white-space:nowrap;box-shadow:0 1px 2px #2a042603;transition:background .16s,border-color .16s,box-shadow .16s,transform .16s var(--ease)}
+.btn:hover{background:var(--tint);border-color:#bba5c1;box-shadow:0 2px 5px #2a042608}
+.btn:active{transform:translateY(1px);box-shadow:none}
+.btn.primary,#btnLoad{background:var(--plum);border-color:var(--plum);color:#fff;box-shadow:0 3px 8px #65036014}
+.btn.primary:hover,#btnLoad:hover{background:#50044d;border-color:#50044d;box-shadow:0 4px 10px #65036022}
+.btn.lime{background:var(--lime);border-color:var(--lime);color:var(--deep)}.btn.lime:hover{background:#c3de58;border-color:#c3de58}
+.btn.sm{min-height:32px;padding:6px 10px;font-size:11.5px}
+.btn:disabled{opacity:.45;cursor:default;box-shadow:none;transform:none}
+select,input[type=text],input[type=number],input[type=search],textarea{min-height:38px;max-width:100%;border:1px solid var(--line-2);border-radius:9px;padding:8px 11px;background:#fff;font-size:12.5px;line-height:1.5;transition:border-color .16s,box-shadow .16s,background .16s}
+input::placeholder,textarea::placeholder{color:var(--ink-3);opacity:1}
+select:hover,input:hover,textarea:hover{border-color:#baa7c0}
+select:focus,input:focus,textarea:focus{border-color:var(--plum);box-shadow:0 0 0 3px #6503600b}
+select{cursor:pointer;padding-right:30px;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%23716576' stroke-width='1.5' stroke-linecap='round'%3E%3Cpath d='m5 6 3 3 3-3'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center}
+textarea{display:block;width:100%;min-height:120px;resize:vertical;line-height:1.75;tab-size:2}
+label.f{display:block;font-size:11px;font-weight:500;color:var(--ink-2);margin-bottom:6px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;min-width:0}
+.row.between{justify-content:space-between}.stack{display:flex;flex-direction:column;gap:16px;min-width:0}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 16px;padding:13px 14px;border:1px solid var(--line);border-radius:12px;background:#fff;box-shadow:var(--shadow)}
+.toolbar input[type=search]{min-width:190px;flex:1 1 200px;max-width:320px}
+.toolbar select{max-width:270px}
+.toolbar .check{padding:4px 0}
+.check{display:inline-flex;gap:7px;align-items:center;font-size:12px;cursor:pointer;line-height:1.4}
+input[type=checkbox]{accent-color:var(--plum);width:15px;height:15px;margin:0;flex:0 0 auto;cursor:pointer}
+input[type=search]{padding-left:33px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23877d8c' stroke-width='1.7' stroke-linecap='round'%3E%3Ccircle cx='10.5' cy='10.5' r='6.5'/%3E%3Cpath d='m16 16 4.5 4.5'/%3E%3C/svg%3E");background-size:15px;background-repeat:no-repeat;background-position:11px center}
+
+/* Quiet, legible data surfaces */
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:12px}
+th,td{text-align:left;padding:11px 13px;border-bottom:1px solid var(--line);vertical-align:middle;line-height:1.5}
+th{font-weight:550;color:var(--ink-2);font-size:10.5px;position:sticky;top:0;background:#faf8fb;white-space:nowrap;z-index:1;cursor:default}
+th[data-k]{cursor:pointer}th[data-k]:hover{color:var(--plum);background:var(--tint-2)}
+th.sorted{color:var(--plum);background:#f2ebf4}
+td.r,th.r{text-align:right}td.num{font-size:12px}
+tbody tr:last-child>td{border-bottom:0}
+tbody tr{transition:background .13s}
+tr.click{cursor:pointer}tr.click:hover{background:#f8f3fa}tr.click:active{background:var(--tint-2)}
+tr.sel{background:var(--tint-2)}
+.tablewrap{overflow:auto;border:1px solid var(--line);border-radius:13px;background:#fff;max-height:70vh;box-shadow:var(--shadow);overscroll-behavior:contain}
+.name{max-width:330px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tag{display:inline-flex;align-items:center;padding:3px 7px;border-radius:5px;font-size:10px;font-weight:500;line-height:1.4;background:var(--tint-2);color:var(--ink-2);margin:1px 4px 1px 0;white-space:nowrap}
+.tag.st-detected{background:#f0ebf2;color:#715876}.tag.st-ticketed{background:#e8d9eb;color:var(--plum)}
+.tag.st-fixed{background:var(--plum);color:#fff}.tag.st-verified{background:var(--lime);color:var(--deep)}
+.tag.st-regressed{background:var(--deep);color:#fff}.tag.st-accepted{background:none;border:1px solid var(--line-2)}
+.tag.unknown{background:none;border:1px dashed #b59dbb}
+.scorebar{display:inline-block;width:54px;height:5px;background:var(--tint-2);border-radius:9px;vertical-align:middle;overflow:hidden}
+.scorebar i{display:block;height:100%;background:var(--plum);border-radius:inherit}.spark{vertical-align:middle;max-width:100%}
+
+/* Executive workspace */
+.killchain{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) minmax(122px,.8fr);gap:12px;margin:0 0 20px}
+.stage{display:flex;flex-direction:column;position:relative;min-width:0;min-height:138px;padding:18px 20px;border:1px solid var(--line);border-radius:13px;background:#fff;box-shadow:var(--shadow)}
+.stage .n{font-size:36px;font-weight:620;line-height:1.1;letter-spacing:-.055em;font-variant-numeric:tabular-nums;color:var(--deep)}
+.stage .l{order:-1;font-size:11px;letter-spacing:.01em;margin-bottom:10px;font-weight:550;color:var(--ink-2)}
+.stage .s{font-size:10.5px;color:var(--ink-2);margin-top:9px;font-variant-numeric:tabular-nums}
+.stage.fixed{background:#f3ebf5;border-color:#e7d9ea}.stage.fixed .n{color:var(--plum)}
+.stage.verified{background:var(--lime-tint);border-color:#dce6b9}.stage.verified .n{color:var(--lime-ink)}
+.stage.verified .l,.stage.verified .s{color:#5c6936}
+.stage.side{justify-content:center;gap:16px;background:transparent;border:0;border-radius:0;box-shadow:none;padding:16px 10px}
+.stage.side .n{font-size:21px;letter-spacing:-.03em;color:var(--ink-2);min-width:20px}
+.stage.side .l{order:0;margin:0;font-weight:400;font-size:11px;color:var(--ink-2)}
+.stage.side div{display:flex;align-items:baseline;gap:10px}
+.kpis{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:0;border:1px solid var(--line);border-radius:13px;background:#fff;margin:0 0 22px;box-shadow:var(--shadow);overflow:hidden}
+.kpi{display:flex;flex-direction:column;min-width:0;padding:17px 15px;border-right:1px solid var(--line)}
+.kpi:last-child{border-right:0}.kpi .v{font-size:24px;font-weight:600;letter-spacing:-.045em;font-variant-numeric:tabular-nums;line-height:1.4;margin:5px 0 3px}
+.kpi .v em{font-style:normal;font-size:10px;font-weight:400;letter-spacing:0;color:var(--ink-2);margin-left:4px;white-space:nowrap}
+.kpi .l{order:-1;font-size:10px;font-weight:500;color:var(--ink-2)}
+.kpi .sub{font-size:10px;line-height:1.65;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.kpi:nth-child(5) .v{color:var(--plum)}.kpi:nth-child(6) .v{color:var(--lime-ink)}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;margin-bottom:20px;align-items:stretch}
+.panel{min-width:0;border:1px solid var(--line);border-radius:14px;padding:22px;background:#fff;box-shadow:var(--shadow)}
+.panel h3{margin-bottom:18px}.panel .hint{font-size:10.5px;line-height:1.7;color:var(--ink-2);margin-top:18px;padding-top:13px;border-top:1px solid var(--line)}
+.panel>svg{display:block;max-width:100%;height:auto}
+.panel:has(>table){overflow:auto;overscroll-behavior:contain}
+.panel>table{min-width:580px}.panel>table th{background:#fff;border-bottom-color:var(--line-2);font-size:10px}
+.panel>table th,.panel>table td{padding:9px 10px}.panel>table th:first-child,.panel>table td:first-child{padding-left:0}
+.panel>table th:last-child,.panel>table td:last-child{padding-right:0}.panel>table .name{max-width:240px;font-size:11.5px}
+.ladder{display:grid;grid-template-columns:90px minmax(40px,1fr) 75px;gap:12px 14px;align-items:center;font-size:11.5px}
+.ladder .bar{display:flex;height:10px;background:#f4f0f5;border-radius:6px;overflow:hidden}
+.ladder .bar i{display:block;height:100%;background:var(--plum);transition:width .25s var(--ease)}
+.ladder .bar i.lime{background:var(--lime)}.ladder .bar i.tint{background:var(--tint-3)}.ladder .r{text-align:right}
+input[type=range]{width:100%;height:22px;margin:6px 0 18px;accent-color:var(--plum);cursor:pointer;box-shadow:none}
+.cols:has(>.whatif){grid-template-columns:minmax(240px,.85fr) minmax(0,2fr)}
+.whatif{background:linear-gradient(155deg,#fff 35%,#f6f0f8);border-color:#e5d8e9}
+.whatif h3{font-size:15px;line-height:1.55;margin-bottom:14px;max-width:250px}
+.whatif .big{font-size:36px;font-weight:600;letter-spacing:-.055em;font-variant-numeric:tabular-nums;color:var(--plum);line-height:1.2}
+.whatif .row.between{flex-direction:column;align-items:flex-start;gap:24px}
+#wiU{margin-top:7px;font-size:11px}
+#wiL{max-width:100%!important;font-size:11px;line-height:1.9;border-top:1px solid #e5d8e9;padding-top:16px}
+.legend{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:10px;color:var(--ink-2);margin-top:15px}
+.legend i{display:inline-block;width:7px;height:7px;border-radius:2px;vertical-align:0;margin-right:6px}
+.bars{display:flex;gap:3px;align-items:flex-end;height:110px}
+
+/* Drawer and focused work */
+.drawer{position:fixed;top:12px;right:12px;height:calc(100vh - 24px);height:calc(100dvh - 24px);width:min(600px,calc(100vw - 24px));background:#fff;border:1px solid var(--line-2);border-radius:18px;box-shadow:0 12px 60px #2a042629,0 2px 10px #2a04260a;transform:translateX(calc(100% + 24px));visibility:hidden;transition:transform .28s var(--ease),visibility 0s .28s;overflow:auto;overscroll-behavior:contain;padding:27px 26px 32px;z-index:20}
+.drawer.open{transform:none;visibility:visible;transition:transform .28s var(--ease),visibility 0s}
+.drawer .close{position:absolute;top:22px;right:22px;background:var(--tint);border-color:var(--line)}
+.drawer h2{padding-right:75px;line-height:1.35;font-size:21px;margin-bottom:12px}
+.section{border-top:1px solid var(--line);padding:20px 0}.section h3{margin-bottom:12px}
+.section:last-child{padding-bottom:0}
+.parts{display:grid;grid-template-columns:110px minmax(60px,1fr) 32px;gap:7px 12px;font-size:11px;align-items:center}
+.parts .bar{height:5px;background:var(--tint-2);border-radius:5px;overflow:hidden}.parts .bar i{display:block;height:100%;background:var(--plum);border-radius:inherit}
+.sample{padding:13px 0;border-bottom:1px solid var(--line);font-size:12px;line-height:1.7;overflow-wrap:anywhere}
+.sample .m{color:var(--ink-2);font-size:11px}.sample .raw{margin:4px 0}
+.states{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
+.live{background:var(--deep);color:#e7dce8;font-family:ui-monospace,Consolas,Menlo,monospace;font-size:11px;line-height:1.8;padding:14px 16px;border-radius:10px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.live .t{color:var(--lime)}
+.verdict{background:var(--tint);border:1px solid var(--line);border-radius:12px;padding:16px;font-size:12px;line-height:1.7}
+.verdict dt{font-size:10px;font-weight:600;color:var(--ink-2);margin-top:12px}.verdict dd{margin:3px 0 0}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px 16px}
+.grid2>div{min-width:0}.grid2 input,.grid2 select{width:100%}
+
+/* Supporting surfaces */
+.overlay{position:fixed;inset:0;background:#2a042655;backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;padding:16px;z-index:30;animation:fade-in .18s ease}
+.modal{background:#fff;border:1px solid #ffffffaa;border-radius:18px;width:min(720px,100%);max-height:90vh;max-height:90dvh;overflow:auto;padding:28px;box-shadow:0 25px 100px #2a042629;animation:view-in .22s var(--ease)}
+.modal h2{margin-bottom:10px}.modal>p{margin-bottom:20px}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--deep);color:#fff;padding:13px 18px;border:1px solid #ffffff20;border-radius:12px;font-size:12px;line-height:1.5;z-index:40;max-width:min(560px,calc(100vw - 32px));box-shadow:0 8px 32px #2a042626;animation:toast-in .22s var(--ease)}
+.toast.err{background:var(--plum)}
+.empty{border:1px dashed var(--line-2);border-radius:14px;padding:38px 24px;text-align:center;color:var(--ink-2);background:#fff;font-size:12px;line-height:1.75}
+#execBody>.empty{border:1px solid var(--line);padding:72px 24px 78px;min-height:340px;box-shadow:var(--shadow)}
+#execBody>.empty::before{content:"";display:block;width:54px;height:54px;margin:0 auto 24px;border-radius:16px;background-color:var(--tint-2);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23650360' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3M13 3h8v8M11 13 21 3M7 13v4m5-1v1m5-5v5'/%3E%3C/svg%3E");background-size:27px;background-position:center;background-repeat:no-repeat}
+#execBody>.empty p{font-size:15px;color:var(--ink);line-height:1.7;max-width:350px;margin:0 auto 20px}
+.empty .btn{margin:5px 4px 0}
+.md{white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Consolas,Menlo,monospace;font-size:12px;line-height:1.9;background:#fff;border:1px solid var(--line);border-radius:13px;padding:24px;max-height:65vh;overflow:auto;box-shadow:var(--shadow)}
+.mapping{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px 16px}.mapping select{width:100%}
+.dropzone{border:1px dashed var(--line-2);border-radius:12px;padding:16px;color:var(--ink-2);font-size:12px}
+.dropzone.over{background:var(--tint-2);border-color:var(--plum)}.main.over{box-shadow:inset 0 0 0 3px var(--plum);background:#f0e8f2}
+details{border:1px solid var(--line);border-radius:11px;padding:12px 15px;background:#fff;font-size:12px}
+summary{cursor:pointer;font-size:12px;font-weight:500;color:var(--ink-2)}summary::marker{color:var(--plum);font-size:10px}
+details[open]>summary{margin-bottom:12px;color:var(--plum)}
+.drawer details{background:var(--tint);padding:10px 12px}
+#proposedList{overflow:auto;padding:14px 16px;border:1px solid var(--line);border-radius:11px;background:#fff;font-size:11.5px}
+#runInfo{line-height:1.85;overflow-wrap:anywhere}#runInfo>div+div{margin-top:9px}
+#teamJson{background:#fcfafd;padding:15px;line-height:1.65;font-size:11.5px}
+#view-settings .cols{grid-template-columns:minmax(0,1.6fr) minmax(260px,1fr)}
+#view-settings .stack{gap:20px}#view-settings .panel>p{margin-bottom:18px}
+#view-settings .grid2{margin:18px 0!important}
+#view-settings .panel>.row{margin-top:16px!important}
+#view-signatures .panel .row{gap:10px}
+#reFlags{flex:0 0 60px}
+.main,.drawer,.modal,.tablewrap,.md,.panel,.nav{scrollbar-width:thin;scrollbar-color:#cfc1d4 transparent}
+
+/* Presentation mode follows the same data and controls. */
+body.present .rail,body.present .topbar{display:none}
+body.present .app{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
+body.present .main{padding:42px 48px}
+body.present .view{max-width:1440px;font-size:16px}
+body.present .stage .n{font-size:48px}body.present .kpi .v{font-size:28px}
+.present-exit{position:fixed;top:14px;right:18px;z-index:5;box-shadow:var(--shadow)}
+
+/* Responsive: existing navigation and actions remain directly accessible. */
+@media(min-width:1600px){.main{padding:36px 40px 50px}.topbar{padding-right:40px;padding-left:40px}.kpi{padding:19px}.kpi .v{font-size:28px}}
+@media(max-width:1250px){
+  :root{--rail:205px}.rail{padding-right:11px;padding-left:11px}.brand{font-size:18px}.brand span{font-size:9px}
+  .topbar{padding:14px 22px}.main{padding:25px 24px 40px}
+  .topbar #dataStatus{flex-basis:190px;max-width:none}
+  .killchain{gap:9px;grid-template-columns:repeat(4,minmax(0,1fr)) 112px}.stage{padding:16px 15px}.stage.side{padding:12px 5px}
+  .kpis{grid-template-columns:repeat(4,minmax(0,1fr))}.kpi{border-bottom:1px solid var(--line)}.kpi:nth-child(4){border-right:0}.kpi:nth-child(n+5){border-bottom:0}
+  .kpi .l{font-size:11px}.kpi .sub{font-size:10.5px}
+  .cols{gap:16px}.panel{padding:18px}.ladder[style]{grid-template-columns:105px minmax(30px,1fr) 98px!important;gap:11px 10px}
+  .cols:has(>.whatif){grid-template-columns:minmax(220px,.8fr) minmax(0,1.8fr)}
+}
+@media(max-width:1020px){
+  .topbar #dataStatus{order:9;flex-basis:100%;padding:0}
+  .killchain{grid-template-columns:repeat(4,minmax(0,1fr))}.stage.side{grid-column:1/-1;flex-direction:row;justify-content:flex-end;gap:24px;min-height:0;padding:3px 3px 0}.stage.side .n{font-size:16px}
+  .cols:has(>.whatif){grid-template-columns:minmax(0,1fr)}.whatif .row.between{flex-direction:row;gap:18px}#wiL{flex:1;min-width:250px;border:0;padding:0}.whatif h3{max-width:none}
+  #view-settings .cols{grid-template-columns:minmax(0,1fr)}
+  .ladder{grid-template-columns:75px minmax(30px,1fr) 55px;gap:10px}
+  .ladder[style]{grid-template-columns:85px minmax(30px,1fr) 82px!important;font-size:10px}.ladder .small{font-size:10px}
+}
+@media(max-width:900px){
+  .app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr)}
+  .rail{grid-row:auto;padding:15px 18px 0;gap:12px}
+  .brand{padding:0;font-size:18px;display:flex;align-items:center;gap:0}
+  .brand::before{height:17px;width:5px;margin-right:11px}.brand span{margin:0 0 0 auto;font-size:10px}
+  .nav{flex-direction:row;gap:4px;overflow-x:auto;padding:0 0 10px;scrollbar-width:thin;scrollbar-color:#6c4468 transparent}
+  .nav button{flex:0 0 auto;min-height:40px;padding:9px 12px;gap:7px;font-size:12px;border-radius:8px;white-space:nowrap}
+  .nav button::before{width:15px;height:15px;flex-basis:15px}.nav button.on{box-shadow:inset 0 -2px var(--lime)}
+  .nav button[data-view="settings"]{margin-top:0}.nav .count{min-width:18px;padding:1px 4px;font-size:9px}
+  .rail .foot{display:none}.topbar{min-height:65px;padding:12px 22px}.topbar #dataStatus{order:0;flex-basis:160px;max-width:280px;font-size:10px}
+  .main{padding:24px 22px 38px}.view>.row.between:first-child{margin-bottom:20px!important}
+  .killchain{grid-template-columns:repeat(4,minmax(0,1fr))}.stage.side{justify-content:flex-start;padding-left:2px}
+  .cols{gap:16px}.ladder[style]{grid-template-columns:95px minmax(30px,1fr) 95px!important;font-size:11px}
+  .drawer{width:min(590px,calc(100vw - 24px))}
+  body.present .main{padding:36px 24px}
+}
+@media(max-width:650px){
+  .rail{padding:14px 14px 0;gap:12px}.brand span{font-size:9px;max-width:160px;text-align:right;line-height:1.4}.nav{gap:3px}
+  .nav button{min-height:41px;padding:9px 11px}.topbar{gap:8px;padding:11px 16px}
+  .topbar #teamSel{flex:1 1 145px;max-width:none;width:145px;font-size:11px}.topbar .grow{display:none}.topbar .btn{padding:8px 10px;font-size:11px;min-height:38px}
+  .topbar #dataStatus{order:9;flex-basis:100%;max-width:none;padding:0;font-size:9.5px}
+  .topbar #dataSel{flex:1 1 140px;max-width:none}.topbar #btnPull{flex:1}
+  .main{padding:22px 16px 32px;scrollbar-gutter:auto}
+  h1{font-size:23px}h2{font-size:19px}.view>.row.between:first-child{align-items:flex-start;gap:10px}
+  #execSub{font-size:10.5px;max-width:290px}.view>.row.between>div:first-child{min-width:0}
+  #view-exec>.row.between>div:first-child{flex:1;min-width:210px}#btnPresent{min-height:33px;font-size:11px;padding:6px 10px}
+  .killchain{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:16px}.stage{padding:16px 17px;min-height:128px}.stage .n{font-size:34px}.stage .l{font-size:11px}.stage .s{font-size:10px}
+  .stage.side{gap:22px;padding:3px 2px 0}.stage.side .l{font-size:10px}.stage.side .n{font-size:17px}
+  .kpis{grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:16px}.kpi{padding:15px 16px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)!important}
+  .kpi:nth-child(2n){border-right:0}.kpi:last-child{border-bottom:0!important;grid-column:1/-1}.kpi .v{font-size:25px}.kpi .l{font-size:11px}.kpi .sub{font-size:10px}
+  .cols,.cols:has(>.whatif),#view-settings .cols{grid-template-columns:minmax(0,1fr);gap:16px;margin-bottom:16px}
+  .panel{padding:19px 17px;border-radius:13px}.panel h3{margin-bottom:17px;font-size:13px}.panel .hint{font-size:10.5px}
+  .ladder{grid-template-columns:85px minmax(40px,1fr) 62px;gap:12px 10px}
+  .ladder[style]{grid-template-columns:100px minmax(30px,1fr) 95px!important}.ladder .small{font-size:10px}
+  .whatif .row.between{flex-direction:column;gap:18px}#wiL{min-width:0;border-top:1px solid #e5d8e9;padding-top:14px}.whatif .big{font-size:36px}
+  .toolbar{padding:12px;gap:10px}.toolbar input[type=search]{max-width:none;flex-basis:100%;min-width:0}.toolbar select{flex:1;min-width:0;max-width:100%}.toolbar .check{font-size:11px}
+  .toolbar .grow{display:none}.toolbar .btn{margin-left:auto}
+  #incSig{flex-basis:100%}.tablewrap{max-height:65vh;border-radius:11px}th,td{padding:11px 12px}.name{max-width:265px}
+  select,input[type=text],input[type=number],input[type=search],textarea{font-size:16px;min-height:42px}
+  .drawer{inset:8px 8px auto auto;width:calc(100vw - 16px);height:calc(100vh - 16px);height:calc(100dvh - 16px);padding:24px 18px;border-radius:15px}
+  .drawer h2{font-size:19px;padding-right:63px}.drawer .close{top:20px;right:17px;min-height:32px}
+  .drawer .section>.row.between{align-items:flex-start;gap:16px}.drawer .section>.row.between>div{max-width:100%}
+  .section{padding:18px 0}.grid2{gap:13px 12px}.parts{grid-template-columns:100px minmax(50px,1fr) 30px}
+  .modal{padding:22px 18px;border-radius:15px;max-height:92dvh}.overlay{padding:12px}
+  .toast{bottom:16px;font-size:11px;padding:12px 15px}
+  .md{padding:17px;font-size:11px}.mapping{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 12px}
+  .mapping select{font-size:13px}#reTest{min-width:0!important;flex:1 1 calc(100% - 72px)!important}#reFlags{width:60px;flex:0 0 60px}
+  #view-settings .panel>.row{gap:9px}#view-settings .panel>.row .btn{font-size:11px;padding:8px 10px}
+  #execBody>.empty{padding:55px 20px;min-height:320px}#execBody>.empty p{font-size:14px}
+  body.present .main{padding:32px 16px}body.present .stage .n{font-size:38px}body.present .kpi .v{font-size:26px}
+}
+@media(max-width:370px){.brand span{max-width:135px;font-size:8px}.topbar #teamSel{flex-basis:100%;width:100%}.topbar #btnLoad,.topbar #btnDemo{flex:1}.grid2,.mapping{grid-template-columns:minmax(0,1fr)}.ladder[style]{grid-template-columns:85px minmax(25px,1fr) 85px!important}.main{padding-right:12px;padding-left:12px}.kpi{padding:14px}}
+@keyframes view-in{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
+@keyframes toast-in{from{opacity:0;transform:translate(-50%,6px)}to{opacity:1;transform:translate(-50%,0)}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+.nav button[data-view="exec"]{--icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.65%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%223%22%20y%3D%223%22%20width%3D%227%22%20height%3D%227%22%20rx%3D%221.5%22/%3E%3Crect%20x%3D%2214%22%20y%3D%223%22%20width%3D%227%22%20height%3D%227%22%20rx%3D%221.5%22/%3E%3Crect%20x%3D%223%22%20y%3D%2214%22%20width%3D%227%22%20height%3D%227%22%20rx%3D%221.5%22/%3E%3Crect%20x%3D%2214%22%20y%3D%2214%22%20width%3D%227%22%20height%3D%227%22%20rx%3D%221.5%22/%3E%3C/svg%3E")}
+.nav button[data-view="offenders"]{--icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.65%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M4%2020V10m8%2010V4m8%2016v-7%22/%3E%3Cpath%20d%3D%22M2%2020h20%22/%3E%3C/svg%3E")}
+.nav button[data-view="incidents"]{--icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.65%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%224%22%20y%3D%223%22%20width%3D%2216%22%20height%3D%2218%22%20rx%3D%222%22/%3E%3Cpath%20d%3D%22M8%208h8m-8%204h8m-8%204h5%22/%3E%3C/svg%3E")}
+.nav button[data-view="ledger"]{--icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.65%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%225%22%20cy%3D%226%22%20r%3D%222%22/%3E%3Ccircle%20cx%3D%2219%22%20cy%3D%2218%22%20r%3D%222%22/%3E%3Cpath%20d%3D%22M7%206h7a4%204%200%200%201%200%208h-4a2%202%200%200%200%200%204h7%22/%3E%3C/svg%3E")}
+.nav button[data-view="signatures"]{--icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.65%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22m8%205-6%207%206%207m8-14%206%207-6%207m-3-15-2%2016%22/%3E%3C/svg%3E")}
+.nav button[data-view="report"]{--icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.65%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M14%202H6a2%202%200%200%200-2%202v16a2%202%200%200%200%202%202h12a2%202%200%200%200%202-2V8Z%22/%3E%3Cpath%20d%3D%22M14%202v6h6M8%2013h8m-8%204h6%22/%3E%3C/svg%3E")}
+.nav button[data-view="settings"]{--icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.65%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M12%203v3m0%2012v3M3%2012h3m12%200h3M5.6%205.6l2.1%202.1m8.6%208.6%202.1%202.1M5.6%2018.4l2.1-2.1m8.6-8.6%202.1-2.1%22/%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%226%22/%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%222%22/%3E%3C/svg%3E")}
+#btnLoad::before{content:"";width:14px;height:14px;flex:0 0 14px;background:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.7%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M12%2016V3m-4%204%204-4%204%204M4%2014v5a2%202%200%200%200%202%202h12a2%202%200%200%200%202-2v-5%22/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.7%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M12%2016V3m-4%204%204-4%204%204M4%2014v5a2%202%200%200%200%202%202h12a2%202%200%200%200%202-2v-5%22/%3E%3C/svg%3E") center/contain no-repeat}
+#btnDemo::before{content:"";width:14px;height:14px;flex:0 0 14px;background:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.7%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22m9%205%2011%207-11%207Z%22/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.7%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22m9%205%2011%207-11%207Z%22/%3E%3C/svg%3E") center/contain no-repeat}
+#btnPresent::before{content:"";width:14px;height:14px;flex:0 0 14px;background:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.7%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%223%22%20y%3D%223%22%20width%3D%2218%22%20height%3D%2212%22%20rx%3D%222%22/%3E%3Cpath%20d%3D%22M12%2015v6m-4%200%204-4%204%204%22/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.7%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%223%22%20y%3D%223%22%20width%3D%2218%22%20height%3D%2212%22%20rx%3D%222%22/%3E%3Cpath%20d%3D%22M12%2015v6m-4%200%204-4%204%204%22/%3E%3C/svg%3E") center/contain no-repeat}
+#btnExportOff::before,#btnExportInc::before,#btnLedgerExport::before,#btnReportDl::before,#btnTeamDl::before{content:"";width:14px;height:14px;flex:0 0 14px;background:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.7%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M12%203v12m-4-4%204%204%204-4M4%2016v3a2%202%200%200%200%202%202h12a2%202%200%200%200%202-2v-3%22/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.7%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M12%203v12m-4-4%204%204%204-4M4%2016v3a2%202%200%200%200%202%202h12a2%202%200%200%200%202-2v-3%22/%3E%3C/svg%3E") center/contain no-repeat}
+
+/* Compact data controls — the upload / demo-data surfaces take less room. Rules above are unchanged; delete this block to revert. */
+.topbar{min-height:0;padding-top:10px;padding-bottom:10px;gap:6px}
+.topbar .btn{min-height:32px;padding:5px 11px;gap:6px}
+.topbar select{min-height:32px;padding-top:5px;padding-bottom:5px}
+.topbar #dataStatus{line-height:1.4}
+@media(min-width:651px){
+  .topbar{justify-content:flex-end}
+  .topbar .grow{display:none}
+  .topbar #dataStatus{order:0;flex:1 1 80px;min-width:0;max-width:none;padding:0 0 0 4px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+}
+@media(max-width:650px){
+  .topbar .btn{min-height:34px;padding:6px 10px}
+  .topbar select{min-height:34px}
+  .topbar #dataStatus{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+}
+@media(min-width:371px) and (max-width:650px){.topbar #teamSel{flex-basis:120px}}
+#execBody>.empty{display:flex;align-items:center;flex-wrap:wrap;gap:10px 14px;min-height:0;padding:14px 18px;text-align:left}
+#execBody>.empty::before{flex:0 0 36px;width:36px;height:36px;margin:0;border-radius:10px;background-size:18px}
+#execBody>.empty p{flex:1 1 220px;max-width:none;margin:0;font-size:13px;line-height:1.5}
+#execBody>.empty .btn{margin:0;min-height:32px;padding:5px 12px}
+#execBody>.empty .btn:not(.primary){color:var(--ink)}
+#loadBanner{margin-bottom:16px;border-left:3px solid var(--plum)}
+#loadBanner h3{margin-bottom:8px}
+#loadBanner p{margin:0 0 6px;max-width:80ch}
+#loadBanner .row{margin-top:10px}
+.modal .section h3{margin-bottom:6px}
+.ob-list{max-height:188px;overflow:auto;border:1px solid var(--line);border-radius:var(--radius);padding:6px 10px;margin:6px 0 10px;background:var(--tint)}
+.ob-list .check{display:flex;padding:3px 0}
+.ob-list .empty-note{padding:6px 0;color:var(--ink-2);font-size:12px}
+.ob-ci{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:3px 0;font-size:12px}
+.ob-ci>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ob-ci select{flex:0 0 46%;max-width:46%}
+.ob-top{display:flex;justify-content:space-between;gap:12px;padding:4px 0;border-bottom:1px solid var(--line)}
+.ob-top:last-child{border-bottom:0}
+.ob-top>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.warnline{color:var(--plum);margin:2px 0}
+@media(max-width:650px){.ob-top{flex-direction:column;gap:1px}.ob-top>span:first-child{white-space:normal}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="brand">Toil Analyzer<span id="brandSub">incident dump → verified savings</span></div>
+    <nav class="nav" id="nav">
+      <button data-view="exec" class="on">Executive</button>
+      <button data-view="offenders">Offenders <span class="count" id="nOffenders"></span></button>
+      <button data-view="incidents">Incidents <span class="count" id="nIncidents"></span></button>
+      <button data-view="ledger">Kill chain <span class="count" id="nLedger"></span></button>
+      <button data-view="signatures">Signatures <span class="count" id="nSigs"></span></button>
+      <button data-view="report">Report</button>
+      <button data-view="settings">Settings</button>
+    </nav>
+    <div class="foot"><span id="modeChip" class="chip line">Lite</span><div id="modeText" style="margin-top:6px"></div></div>
+  </aside>
+
+  <header class="topbar">
+    <select id="teamSel" title="Team"></select>
+    <span id="dataStatus" class="muted small">No data loaded</span>
+    <span class="grow"></span>
+    <input type="file" id="csvFile" accept=".csv,.txt" class="hide">
+    <select id="dataSel" class="hide" title="Data files in data/"></select>
+    <button class="btn" id="btnLoad">Load CSV</button>
+    <button class="btn hide" id="btnPull">Pull from ServiceNow</button>
+    <button class="btn" id="btnDemo">Demo data</button>
+    <button class="btn hide" id="btnSync" title="git pull, then reload team properties and signatures">Sync repo</button>
+  </header>
+
+  <main class="main">
+    <div id="loadBanner" class="panel hide" role="status" aria-live="polite"></div>
+    <!-- Executive -->
+    <section class="view" id="view-exec">
+      <div class="row between" style="margin-bottom:14px">
+        <div><h1 id="execTitle">Executive view</h1><div class="muted small" id="execSub"></div></div>
+        <div class="row"><button class="btn" id="btnPresent">Present</button></div>
+      </div>
+      <div id="execBody"></div>
+    </section>
+
+    <!-- Offenders -->
+    <section class="view hide" id="view-offenders">
+      <div class="row between" style="margin-bottom:10px"><h1>Offenders</h1><span class="muted small">Recurring patterns ranked by toil score × volume. Click a row to work it.</span></div>
+      <div class="toolbar">
+        <input type="search" id="offSearch" placeholder="Search patterns">
+        <select id="offCat"><option value="">All categories</option></select>
+        <select id="offState"><option value="">Any state</option><option value="untracked">Not tracked</option></select>
+        <label class="check"><input type="checkbox" id="offToil" checked> Toil candidates only</label>
+        <label class="check"><input type="checkbox" id="offUnknown"> Unknown only</label>
+        <span class="grow"></span>
+        <button class="btn sm" id="btnExportOff">Export shown as CSV</button>
+      </div>
+      <div class="tablewrap"><table id="offTable"></table></div>
+    </section>
+
+    <!-- Incidents -->
+    <section class="view hide" id="view-incidents">
+      <div class="row between" style="margin-bottom:10px"><h1>Incidents</h1><span class="muted small" id="incMeta"></span></div>
+      <details style="margin-bottom:12px"><summary>Column mapping</summary><div class="mapping" id="mapping" style="margin-top:10px"></div><div class="row" style="margin-top:10px"><button class="btn sm" id="btnRemap">Apply mapping and re-analyze</button></div></details>
+      <div class="toolbar"><input type="search" id="incSearch" placeholder="Search incidents"><select id="incSig"><option value="">All patterns</option></select><span class="grow"></span><button class="btn sm" id="btnExportInc">Export shown as CSV</button></div>
+      <div class="tablewrap"><table id="incTable"></table></div>
+    </section>
+
+    <!-- Ledger -->
+    <section class="view hide" id="view-ledger">
+      <div class="row between" style="margin-bottom:10px"><h1>Kill chain</h1><div class="row"><button class="btn sm" id="btnLedgerExport">Export ledger</button><button class="btn sm" id="btnLedgerImport">Import ledger</button><input type="file" id="ledgerFile" accept=".json" class="hide"><button class="btn sm hide" id="btnJira" title="Ticketed offenders whose Jira is Done move to Fixed">Sync Jira</button><button class="btn sm hide" id="btnCommit">Commit &amp; push ledger</button></div></div>
+      <p class="muted small">Every tracked pattern moves Detected → Ticketed → Fixed → Verified. Verified means the next data pulls showed two clean weeks; Regressed means it came back.</p>
+      <div class="tablewrap"><table id="ledgerTable"></table></div>
+    </section>
+
+    <!-- Signatures -->
+    <section class="view hide" id="view-signatures">
+      <div class="row between" style="margin-bottom:10px"><h1>Signatures</h1><span class="muted small">Shared catalog from the repo. Unknown patterns become proposals; a merged proposal teaches every team.</span></div>
+      <div class="panel" style="margin-bottom:14px"><h3>Test a regex against the loaded incidents</h3><div class="row"><input type="text" id="reTest" placeholder="e.g. control-?m.*not ok" style="flex:1;min-width:240px"><input type="text" id="reFlags" value="i" style="width:60px"><button class="btn sm" id="btnReTest">Test</button></div><div id="reOut" class="small" style="margin-top:8px"></div></div>
+      <div class="tablewrap"><table id="sigTable"></table></div>
+      <h3 style="margin:18px 0 8px">Proposed (pending merge)</h3>
+      <div id="proposedList" class="small muted">None yet.</div>
+    </section>
+
+    <!-- Report -->
+    <section class="view hide" id="view-report">
+      <div class="row between" style="margin-bottom:10px"><h1>Report</h1><div class="row"><button class="btn sm" id="btnReportCopy">Copy markdown</button><button class="btn sm" id="btnReportDl">Download .md</button><button class="btn sm hide" id="btnReportSave">Save to repo</button><button class="btn sm hide" id="btnPush">Push metrics to Dynatrace</button></div></div>
+      <div id="reportMeta" class="muted small" style="margin-bottom:8px"></div>
+      <div class="md" id="reportMd"></div>
+      <details style="margin-top:12px"><summary>Metric lines that would be pushed</summary><div class="md" id="metricsPreview" style="max-height:260px"></div></details>
+    </section>
+
+    <!-- Settings -->
+    <section class="view hide" id="view-settings">
+      <h1 style="margin-bottom:10px">Settings</h1>
+      <div class="cols">
+        <div class="panel">
+          <h3>Team properties</h3>
+          <p class="muted small" id="teamSrc"></p>
+          <div class="grid2" style="margin-bottom:10px">
+            <div><label class="f">Technical rate (per hour)</label><input type="number" id="setRateT" step="1"></div>
+            <div><label class="f">Business rate (per hour)</label><input type="number" id="setRateB" step="1"></div>
+            <div><label class="f">Toil threshold (score 0–100)</label><input type="number" id="setThreshold" min="0" max="100"></div>
+            <div><label class="f">Repetitive from (count)</label><input type="number" id="setRepMin" min="1"></div>
+          </div>
+          <label class="f">team.json</label>
+          <textarea id="teamJson" class="mono" style="min-height:320px"></textarea>
+          <div class="row" style="margin-top:8px"><button class="btn primary" id="btnTeamSave">Save</button><button class="btn" id="btnTeamDl">Download team.json</button><button class="btn" id="btnTeamNew">New team from this</button><span id="teamMsg" class="small muted"></span></div>
+        </div>
+        <div class="stack">
+          <div class="panel"><h3>Add a team</h3><p class="small muted" id="obIntro"></p><button class="btn primary" id="btnOnboard" style="margin-top:10px">Onboard a team</button></div>
+          <div class="panel"><h3>How this copy runs</h3><div id="runInfo" class="small"></div></div>
+          <div class="panel"><h3>Local storage</h3><p class="small muted">In Lite mode the ledger and team edits live in this browser only. Export the ledger before switching machines.</p><button class="btn sm" id="btnClearLocal">Clear local data for this team</button></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="drawer" id="drawer"><button class="btn sm close" id="drawerClose">Close</button><div id="drawerBody"></div></div>
+<div id="modalRoot"></div>
+<div id="toastRoot"></div>
+
+<!-- @inline:catalog -->
+<script id="embedded-catalog" type="application/json">[{"id":"apigee-5xx","name":"Apigee 5xx spike","category":"api","priority":40,"match":{"regex":"apigee.*(5xx|50[0-9]|error)|(5xx|503) (spike|errors?) .*(apigee|proxy|/v\\d)","flags":"i","fields":["short","description"]},"disposition":"tune","hours":{"technical":1.5,"business":2},"automationHint":"Correlate with ECS deploy/scale events; tune alert to sustained error rate, not bursts.","samples":["Apigee 5xx spike on /v1/accounts","Apigee proxy errors target 503","503 spike on /v1/payments via apigee"],"owner":"core-sre"},{"id":"cert-expiry","name":"Certificate expiring","category":"certificate","priority":50,"match":{"regex":"(certificate|\\bcert\\b|tls|ssl).*(expir|renew)|(expir|renew).*(certificate|\\bcert\\b)","flags":"i","fields":["short","description"]},"disposition":"automate","hours":{"technical":2,"business":8},"automationHint":"Cert inventory playbook + renewal request automation; keystore deploy via AAP with health check.","samples":["Certificate for api-gw-p03.corp.local expires in 14 days","TLS cert renewal needed for lnsvc-app-p07","SSL certificate expiring on ws-ocp-ing-p1"],"owner":"core-sre"},{"id":"controlm-job-failed","name":"Control-M job ended NOT OK","category":"batch","priority":50,"match":{"regex":"control-?m.*(not ok|failed|abend|ended)|\\bctm_[a-z0-9_]+.*(fail|not ok|rc=)","flags":"i","fields":["short","description"]},"disposition":"automate","hours":{"technical":0.5,"business":3},"automationHint":"AAP job template: detect NOT OK, clear lock/temp, rerun from failed step, post evidence to the incident.","samples":["Control-M job CTM_LN_ACQ_FEED_D ended NOT OK (RC=12)","Control-M job CTM_PAY_ACH_OUT failed in stage LOAD","CTM_LN_GL_POST ended not ok rc=8"],"owner":"core-sre"},{"id":"disk-space","name":"Disk / filesystem space threshold","category":"platform","priority":30,"match":{"regex":"(disk|filesystem|file system|/var|/opt|/tmp).*(space|full|\\d{2} ?%|threshold)|(space|usage).*(disk|filesystem)","flags":"i","fields":["short","description"]},"disposition":"selfheal","hours":{"technical":0.5,"business":1},"automationHint":"Housekeeping playbook on alert (image prune, log rotation); raise threshold for known-churn paths.","samples":["Disk space 92% on ocp-worker-12","/var/lib/containers filesystem full on ocp-worker-04","Filesystem usage above threshold on ws-jb-p07"],"owner":"core-sre"},{"id":"jboss-thread-pool","name":"JBoss / WildFly thread pool exhausted","category":"platform","priority":40,"match":{"regex":"(jboss|wildfly|thread pool).*(exhaust|max reached|full|busy)|thread.?pool exhausted","flags":"i","fields":["short","description"]},"disposition":"eliminate","hours":{"technical":1.5,"business":4},"automationHint":"Root cause is usually backend timeouts; fix pool sizing/timeouts in standalone.xml, add self-heal recycle as interim.","samples":["JBoss thread pool exhausted on ws-jb-p04","WildFly default thread pool max reached on ws-jb-p11","Thread pool exhausted causing SOAP timeouts"],"owner":"core-sre"},{"id":"kafka-consumer-lag","name":"Kafka consumer lag above threshold","category":"messaging","priority":40,"match":{"regex":"kafka.*lag|consumer( group)?.*\\blag\\b|lag above threshold.*topic","flags":"i","fields":["short","description"]},"disposition":"selfheal","hours":{"technical":0.75,"business":2},"automationHint":"Auto-scale consumer concurrency on lag alert; alert tuning for transient spikes.","samples":["Kafka consumer lag above threshold for topic payments.events","Consumer group loan.status.changed-cg lag 12000 on msk-p1","Kafka lag alert loan notifications"],"owner":"core-sre"},{"id":"mft-transfer-failed","name":"MFT / SFTP transfer failed","category":"file-transfer","priority":40,"match":{"regex":"(mft|sftp|file transfer|transfer).*(fail|error|reset)","flags":"i","fields":["short","description"]},"disposition":"automate","hours":{"technical":0.5,"business":4},"automationHint":"Auto-retry with backoff and vendor endpoint check; resubmit via AAP template with evidence.","samples":["MFT transfer failed for file LN_EXTRACT_20260814.csv","SFTP transfer error to vendor endpoint","Outbound file transfer failed: connection reset"],"owner":"core-sre"},{"id":"mq-queue-depth","name":"MQ queue depth high","category":"messaging","priority":40,"match":{"regex":"(\\bmq\\b|queue).*(depth|backlog).*(high|threshold|\\d)|queue depth (high|alert)","flags":"i","fields":["short","description"]},"disposition":"selfheal","hours":{"technical":0.5,"business":2},"automationHint":"AAP template: check listener state, restart listener, confirm drain; alert on consumer stopped instead of depth.","samples":["MQ queue depth high QL.INBOUND.LOAN","Queue QL.OUT.STATEMENTS depth 5000 above threshold on qm-p01","queue backlog high on QL.PAY.ACK"],"owner":"core-sre"},{"id":"oracle-snapshot-too-old","name":"Oracle ORA-01555 snapshot too old","category":"database","priority":40,"match":{"regex":"ora-01555|snapshot too old","flags":"i","fields":["short","description"]},"disposition":"eliminate","hours":{"technical":2,"business":4},"automationHint":"Fix undo retention / extract chunking with DBA; interim: schedule extract off-peak.","samples":["ORA-01555 snapshot too old in batch on ora-p1","Batch reader hit ORA-01555 during extract","snapshot too old error in nightly report"],"owner":"core-sre"},{"id":"service-account-locked","name":"Service account locked or password expired","category":"access","priority":50,"match":{"regex":"(service )?account.*(locked|lock(ed)? out|password expired|expired password)|ora-28000|password (expired|rotation)","flags":"i","fields":["short","description"]},"disposition":"automate","hours":{"technical":0.5,"business":4},"automationHint":"Rotation workflow: Delinea/Secrets Manager update, forced ECS deployment, health validation, rollback on failure.","samples":["Service account svc_batch_ora locked / password expired","Account svc_ws_ad locked out after failed logins","ORA-28000 the account is locked for svc_mft_xfer"],"owner":"core-sre"}]</script>
+<!-- @endinline:catalog -->
+<!-- @inline:team -->
+<script id="embedded-team" type="application/json">{"$schema":"../../schema/team.schema.json","id":"example-team","name":"Example Prod Support","bu":"auto-finance","apps":["LoanServicing","Payments"],"components":[{"name":"WS batch","match":"control-?m|\\bctm_|spring batch|datastage","tags":["control-m","spring-batch"]},{"name":"WS JBoss","match":"jboss|wildfly|ws-jb-","tags":["jboss"]},{"name":"Payments AWS","match":"ecs|lambda|kafka|msk|apigee|/v1/","tags":["ecs","lambda","kafka","apigee"]},{"name":"Core data","match":"oracle|ora-|mft|sftp|file transfer","tags":["oracle","mft"]},{"name":"Messaging MQ","match":"\\bmq\\b|queue depth|ql\\.","tags":["mq"]},{"name":"Platform","match":"certificate|\\bcert\\b|disk|filesystem|ocp-|openshift|service account|password","tags":["cert","disk"]}],"servicenow":{"assignmentGroups":["PROD-SUPPORT-LOANS","PROD-SUPPORT-PLATFORM","PROD-SUPPORT-AWS"],"ciFilter":[],"days":90,"fields":["number","short_description","description","opened_at","resolved_at","assignment_group","cmdb_ci","category","priority","close_notes","state"]},"jobPrefixes":["CTM_","LN_","PAY_"],"maskPatterns":[{"pattern":"\\b(CTM|LN|PAY)_[A-Z0-9_]+\\b","replace":"<job>","flags":"g"},{"pattern":"\\bQL\\.[A-Z0-9.]+\\b","replace":"<queue>","flags":"g"}],"hoursModel":{"technicalPerIncident":0.75,"byCategory":{"batch":0.5,"access":0.5,"certificate":2,"platform":1,"database":2,"other":1},"elapsedCapHours":8,"businessPerIncident":1.5,"rates":{"technical":85,"business":60},"currency":"USD"},"toil":{"threshold":60,"repetitiveMin":5},"ai":{"model":"sonnet","maxTurns":4,"allowedTools":["Read","Grep","Glob"],"budgetUsdPerRun":0.5,"budgetUsdPerMonth":25,"timeoutSec":180},"dynatrace":{"dimensions":{"bu":"auto-finance","env":"prod"},"pushMetrics":true,"pushBizevents":true},"jira":{"projectKey":"SRE","issueType":"Story","labels":["toil"]},"runbooks":[],"contacts":{"lead":""}}</script>
+<!-- @endinline:team -->
+<!-- @inline:core -->
+<script>
+/* Toil Analyzer core — pure functions, no Node/browser APIs.
+ * Used by: ui/index.html (inlined by scripts/build.js), server/*.js, scripts/*.js
+ * Everything here is deterministic and costs zero tokens. */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.ToilCore = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  const VERSION = '0.1.1';
+
+  const STATES = ['detected', 'ticketed', 'fixed', 'verified', 'regressed', 'accepted'];
+  const STATE_LABEL = { detected: 'Detected', ticketed: 'Ticketed', fixed: 'Fixed', verified: 'Verified', regressed: 'Regressed', accepted: 'Accepted' };
+  const DISPOSITIONS = { eliminate: 1.0, automate: 0.8, selfheal: 0.9, tune: 0.5, accept: 0, review: 0 };
+  const DISPOSITION_LABEL = { eliminate: 'Eliminate', automate: 'Automate', selfheal: 'Self-heal', tune: 'Tune', accept: 'Accept', review: 'Review' };
+
+  // ---------- CSV ----------
+  function detectDelimiter(firstLine) {
+    const c = { ',': 0, ';': 0, '\t': 0, '|': 0 };
+    let inQ = false;
+    for (const ch of firstLine) { if (ch === '"') inQ = !inQ; else if (!inQ && ch in c) c[ch]++; }
+    return Object.keys(c).sort((a, b) => c[b] - c[a])[0] || ',';
+  }
+
+  function parseCSV(text) {
+    const s = String(text || '').replace(/^\uFEFF/, '');
+    const nl = s.indexOf('\n');
+    const delim = detectDelimiter(nl >= 0 ? s.slice(0, nl) : s);
+    const rows = []; let row = [], field = '', inQ = false;
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (inQ) {
+        if (c === '"') { if (s[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
+        else field += c;
+        continue;
+      }
+      if (c === '"') inQ = true;
+      else if (c === delim) { row.push(field); field = ''; }
+      else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+      else if (c !== '\r') field += c;
+    }
+    if (field.length || row.length) { row.push(field); rows.push(row); }
+    const headers = (rows.shift() || []).map(h => h.trim());
+    const out = [];
+    for (const r of rows) {
+      if (r.length === 1 && r[0] === '') continue;
+      const o = {}; headers.forEach((h, j) => { o[h] = (r[j] == null ? '' : String(r[j])).trim(); }); out.push(o);
+    }
+    return { headers, rows: out, delimiter: delim };
+  }
+
+  function csvEscape(v) {
+    const s = v == null ? '' : String(v);
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  function toCSV(rows, headers) {
+    const hs = headers || Object.keys(rows[0] || {});
+    return [hs.map(csvEscape).join(',')].concat(rows.map(r => hs.map(h => csvEscape(r[h])).join(','))).join('\n');
+  }
+
+  // ---------- Column mapping ----------
+  const FIELDS = ['number', 'short', 'description', 'opened', 'resolved', 'group', 'ci', 'category', 'priority', 'notes', 'state', 'assigned'];
+  const FIELD_LABEL = { number: 'Incident number', short: 'Short description', description: 'Description', opened: 'Opened at', resolved: 'Resolved at', group: 'Assignment group', ci: 'Configuration item / app', category: 'Category', priority: 'Priority', notes: 'Close / resolution notes', state: 'State', assigned: 'Assigned to' };
+  const FIELD_PATTERNS = {
+    number: [/^number$/, /^(incident|inc|ticket)([_ ]?(number|id|no))?$/, /^id$/],
+    short: [/^short[_ ]?description$/, /^(title|summary|subject)$/],
+    description: [/^description$/, /^(details|long[_ ]?description)$/],
+    opened: [/^(opened|opened[_ ]?at|sys[_ ]?created[_ ]?on|created|created[_ ]?(on|at)|open[_ ]?date)$/],
+    resolved: [/^(resolved|resolved[_ ]?at|closed|closed[_ ]?at|resolve[_ ]?date|close[_ ]?date)$/],
+    group: [/^(assignment[_ ]?group|group|team)$/],
+    ci: [/^(cmdb[_ ]?ci|configuration[_ ]?item|ci|application|app|u[_ ]?application|business[_ ]?service|service)$/],
+    category: [/^(category|subcategory|u[_ ]?category)$/],
+    priority: [/^(priority|impact|urgency)$/],
+    notes: [/^(close[_ ]?notes|resolution[_ ]?notes|resolution|work[_ ]?notes|comments|resolution[_ ]?code)$/],
+    state: [/^(state|status|incident[_ ]?state)$/],
+    assigned: [/^(assigned[_ ]?to|assignee|owner)$/]
+  };
+  function detectMapping(headers) {
+    const map = {};
+    for (const f of FIELDS) {
+      for (const h of headers) {
+        const n = h.toLowerCase().trim();
+        if (FIELD_PATTERNS[f].some(re => re.test(n)) && !Object.values(map).includes(h)) { map[f] = h; break; }
+      }
+    }
+    return map;
+  }
+
+  function parseDate(v) {
+    if (!v) return null;
+    if (v instanceof Date) return isNaN(v) ? null : v;
+    let s = String(v).trim();
+    if (!s) return null;
+    let t = Date.parse(s);
+    if (isNaN(t)) t = Date.parse(s.replace(' ', 'T'));
+    if (isNaN(t)) { const m = s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})(.*)$/); if (m) t = Date.parse(`${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}${m[4] ? 'T' + m[4].trim() : ''}`); }
+    return isNaN(t) ? null : new Date(t);
+  }
+
+  function normalizeIncidents(rows, mapping) {
+    const g = (r, f) => (mapping[f] ? (r[mapping[f]] || '') : '');
+    return rows.map((r, i) => ({
+      idx: i,
+      number: g(r, 'number') || `ROW${i + 1}`,
+      short: g(r, 'short'),
+      description: g(r, 'description'),
+      opened: parseDate(g(r, 'opened')),
+      resolved: parseDate(g(r, 'resolved')),
+      group: g(r, 'group'),
+      ci: g(r, 'ci'),
+      category: g(r, 'category'),
+      priority: g(r, 'priority'),
+      notes: g(r, 'notes'),
+      state: g(r, 'state'),
+      assigned: g(r, 'assigned'),
+      raw: r
+    }));
+  }
+
+  // ---------- Masking & signatures ----------
+  const BASE_MASKS = [
+    [/https?:\/\/\S+/gi, '<url>'],
+    [/[\w.+-]+@[\w-]+\.[\w.-]+/g, '<email>'],
+    [/\b(inc|chg|task|ritm|req|prb|sctask)\d{5,}\b/gi, '<ticket>'],
+    [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<guid>'],
+    [/\b[0-9a-f]{32}\b/gi, '<hash>'],
+    [/\b\d{1,3}(\.\d{1,3}){3}\b/g, '<ip>'],
+    [/\b\d{4}-\d{2}-\d{2}([ t]\d{2}:\d{2}(:\d{2})?)?\b/gi, '<date>'],
+    [/\b\d{1,2}\/\d{1,2}\/\d{2,4}( \d{1,2}:\d{2}(:\d{2})?( ?[ap]m)?)?\b/gi, '<date>'],
+    [/\b\d{1,2}:\d{2}(:\d{2})?( ?[ap]m)?\b/gi, '<time>'],
+    [/\b\d{8}(_\d{4,6})?\b/g, '<date>'],
+    [/\b[a-z]:\\[^\s"']+/gi, '<path>'],
+    [/(^|[\s(=])(\/[\w.-]+){2,}/g, '$1<path>'],
+    [/\b[a-z][a-z0-9-]*\d[a-z0-9-]*(\.[a-z0-9-]+)+\b/gi, '<host>'],
+    [/\b[a-z]+(-[a-z]+)*-\d{1,4}\b/gi, '<host>'],
+    [/\b\d+(\.\d+)?\s?%/g, '<pct>'],
+    [/\b\d+(\.\d+)?\b/g, '#']
+  ];
+  const STOP = new Set(['the', 'a', 'an', 'of', 'on', 'in', 'at', 'to', 'for', 'is', 'are', 'was', 'were', 'be', 'has', 'have', 'had', 'with', 'and', 'or', 'by', 'from', 'this', 'that', 'it', 'as', 'its', 'please', 'pls', 'fyi', 'hi', 'hello', 'team', 'urgent', 'asap', 'issue', 'error', 'alert', 'incident', 'problem', 'ticket', 'not', 'no']);
+
+  function compileTeamMasks(team) {
+    const out = [];
+    for (const p of ((team && team.maskPatterns) || [])) {
+      try { const flags = (p.flags || 'gi').includes('g') ? (p.flags || 'gi') : (p.flags || '') + 'g'; out.push([new RegExp(p.pattern, flags), p.replace || '<x>']); } catch (e) { /* skip bad pattern */ }
+    }
+    return out;
+  }
+  function maskText(text, team, teamMasks) {
+    let s = String(text || '');
+    for (const [re, rep] of (teamMasks || compileTeamMasks(team))) s = s.replace(re, rep);
+    for (const [re, rep] of BASE_MASKS) s = s.replace(re, rep);
+    return s.toLowerCase().replace(/[^\w<>#%.:/ -]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  function fnv(str) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return h.toString(16).padStart(8, '0');
+  }
+  function signatureKey(masked) {
+    const toks = masked.split(' ').filter(t => t.length > 1 && !STOP.has(t));
+    return toks.slice(0, 8).join(' ') || masked.slice(0, 60) || '(empty)';
+  }
+
+  function buildMatchers(catalog) {
+    return (catalog || []).slice().sort((a, b) => (b.priority || 0) - (a.priority || 0)).map(sig => {
+      let re = null;
+      try { re = new RegExp(sig.match.regex, (sig.match.flags || 'i').replace('g', '')); } catch (e) { re = null; }
+      return { sig, re, fields: (sig.match && sig.match.fields) || ['short', 'description'] };
+    }).filter(m => m.re);
+  }
+  function matchCatalog(inc, matchers) {
+    for (const m of matchers) {
+      const text = m.fields.map(f => inc[f] || '').join('\n');
+      if (m.re.test(text)) return m.sig;
+    }
+    return null;
+  }
+
+  // ---------- Load checks: duplicates, team scope, sanity ----------
+  /* A load is trusted only when each incident appears once and the incidents are the team's own.
+   * Ownership comes from the data (assignment group → team, across every team.json), never from who loaded the file. */
+  const LOAD_CHECK = { excludedShare: 0.5, duplicateShare: 0.05 };
+  const normKey = s => String(s == null ? '' : s).trim().toLowerCase();
+  const reindex = arr => arr.map((inc, i) => Object.assign({}, inc, { idx: i }));
+  /* Same incident number more than once (stitched or overlapping exports): keep the most recent version.
+   * Resolved beats open, a later resolution beats an earlier one, a later row beats an earlier one. Rows with no number are kept. */
+  function dedupeIncidents(incidents) {
+    const slots = new Map(), order = [];
+    incidents.forEach((inc, pos) => {
+      const k = inc.number && !/^ROW\d+$/.test(inc.number) ? normKey(inc.number) : '';
+      if (!k) { order.push({ inc }); return; }
+      const rank = [inc.resolved ? 1 : 0, inc.resolved ? inc.resolved.getTime() : 0, pos];
+      const cur = slots.get(k);
+      if (!cur) { const slot = { inc, rank, n: 1 }; slots.set(k, slot); order.push(slot); return; }
+      cur.n++;
+      const newer = rank[0] !== cur.rank[0] ? rank[0] > cur.rank[0] : rank[1] !== cur.rank[1] ? rank[1] > cur.rank[1] : rank[2] > cur.rank[2];
+      if (newer) { cur.inc = inc; cur.rank = rank; }
+    });
+    const kept = order.map(s => s.inc);
+    return { incidents: reindex(kept), duplicates: incidents.length - kept.length, repeatedNumbers: Array.from(slots.values()).filter(s => s.n > 1).length };
+  }
+  function teamGroupKeys(team) {
+    const sn = (team && team.servicenow) || {};
+    return new Set([].concat(sn.assignmentGroups || [], sn.assignmentGroupIds || []).map(normKey).filter(Boolean));
+  }
+  /* Assignment group → owning team. A group claimed by two teams is a conflict: CI rejects it, because those
+   * incidents would count for both teams on the dashboard. */
+  function ownershipMap(teams) {
+    const byGroup = new Map(), conflicts = [];
+    for (const t of teams || []) {
+      if (!t || !t.id) continue;
+      const sn = t.servicenow || {};
+      for (const name of [].concat(sn.assignmentGroups || [], sn.assignmentGroupIds || [])) {
+        const k = normKey(name); if (!k) continue;
+        const cur = byGroup.get(k);
+        if (!cur) { byGroup.set(k, { team: t.id, name: String(name).trim() }); continue; }
+        if (cur.team === t.id) continue;
+        const c = conflicts.find(x => x.key === k);
+        if (c) { if (!c.teams.includes(t.id)) c.teams.push(t.id); } else conflicts.push({ key: k, group: cur.name, teams: [cur.team, t.id] });
+      }
+    }
+    return { byGroup, conflicts };
+  }
+  /* Keep only the team's own incidents (by assignment group); count the rest by owning team, or as unowned. */
+  function scopeIncidents(incidents, team, teams) {
+    const own = teamGroupKeys(team);
+    if (!own.size) return { incidents: reindex(incidents), kept: incidents.length, excluded: 0, otherTeams: {}, unowned: 0, scoped: false };
+    const map = ownershipMap(teams), kept = [], otherTeams = {};
+    let unowned = 0;
+    for (const inc of incidents) {
+      const k = normKey(inc.group);
+      if (own.has(k)) { kept.push(inc); continue; }
+      const o = map.byGroup.get(k);
+      if (o && o.team !== (team && team.id)) otherTeams[o.team] = (otherTeams[o.team] || 0) + 1; else unowned++;
+    }
+    return { incidents: reindex(kept), kept: kept.length, excluded: incidents.length - kept.length, otherTeams, unowned, scoped: true };
+  }
+  /* Decide whether a load looks off. If it does, the UI shows it as a preview and the scheduled report writes nothing. */
+  function checkLoad(info) {
+    const n = v => Number(v || 0).toLocaleString('en-US'), reasons = [];
+    if (info.scoped && info.unique && info.excluded / info.unique > LOAD_CHECK.excludedShare) {
+      const parts = Object.entries(info.otherTeams || {}).sort((a, b) => b[1] - a[1]).map(([t, c]) => `${t}: ${n(c)}`);
+      if (info.unowned) parts.push(`no team: ${n(info.unowned)}`);
+      reasons.push({ code: 'mostly-other', text: `${n(info.excluded)} of ${n(info.unique)} incidents are not this team's (${parts.join('; ')}), so only ${n(info.kept)} were kept.` });
+    }
+    if (info.total && info.duplicates / info.total >= LOAD_CHECK.duplicateShare) reasons.push({ code: 'duplicates', text: `${n(info.duplicates)} rows repeated an incident number. The most recent version of each was kept.` });
+    if (!info.scoped && !info.scopeSkipped) reasons.push({ code: 'unscoped', text: 'This team has no assignment groups set, so the load cannot be checked against it.' });
+    return { preview: reasons.length > 0, reasons };
+  }
+  /* Dedupe, then scope to the team, then check. opts.scope === false keeps everything (demo data). */
+  function prepareLoad(incidents, team, teams, opts) {
+    opts = opts || {};
+    const d = dedupeIncidents(incidents || []);
+    const s = opts.scope === false ? { incidents: d.incidents, kept: d.incidents.length, excluded: 0, otherTeams: {}, unowned: 0, scoped: false } : scopeIncidents(d.incidents, team, teams);
+    const info = { total: (incidents || []).length, unique: d.incidents.length, duplicates: d.duplicates, repeatedNumbers: d.repeatedNumbers, kept: s.kept, excluded: s.excluded, otherTeams: s.otherTeams, unowned: s.unowned, scoped: s.scoped, scopeSkipped: opts.scope === false };
+    return { all: d.incidents, incidents: s.incidents, info, check: checkLoad(info) };
+  }
+
+  // ---------- Analysis ----------
+  const DEFAULT_AUTOMATABLE = ['restart', 'rerun', 're-run', 'reran', 'bounce', 'recycle', 'clear', 'cleanup', 'clean up', 'purge', 'reset', 'unlock', 'password', 'expired', 'expiry', 'expire', 'certificate', 'cert ', 'renew', 'disk', 'space', 'filesystem', 'full', 'threshold', 'manually', 'manual', 'kill', 'stuck', 'hung', 'requeue', 'replay', 'resubmit', 'failed job', 'job failed', 'abend', 'retry', 'retried', 'restore', 'reload', 'cache', 'whitelist', 'allowlist', 'provision', 'rotate', 'rotation', 'lag', 'queue depth', 'backlog', 'stale', 'housekeeping'];
+
+  function weekKey(d) {
+    const x = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    const day = x.getUTCDay() || 7; x.setUTCDate(x.getUTCDate() + 4 - day);
+    const y0 = new Date(Date.UTC(x.getUTCFullYear(), 0, 1));
+    const wk = Math.ceil((((x - y0) / 86400000) + 1) / 7);
+    return `${x.getUTCFullYear()}-W${String(wk).padStart(2, '0')}`;
+  }
+  function weekStart(d) { const x = new Date(d); const day = (x.getDay() + 6) % 7; x.setDate(x.getDate() - day); x.setHours(0, 0, 0, 0); return x; }
+  function stats(arr) { const n = arr.length; if (!n) return { mean: 0, cv: 0 }; const mean = arr.reduce((a, b) => a + b, 0) / n; const v = arr.reduce((a, b) => a + (b - mean) ** 2, 0) / n; return { mean, cv: mean ? Math.sqrt(v) / mean : 0 }; }
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  function hoursModel(team) {
+    const hm = (team && team.hoursModel) || {};
+    return {
+      technicalPerIncident: hm.technicalPerIncident != null ? hm.technicalPerIncident : 0.75,
+      byCategory: hm.byCategory || {},
+      elapsedCapHours: hm.elapsedCapHours != null ? hm.elapsedCapHours : 8,
+      businessPerIncident: hm.businessPerIncident != null ? hm.businessPerIncident : 1.5,
+      rates: { technical: (hm.rates && hm.rates.technical) || 85, business: (hm.rates && hm.rates.business) || 60 },
+      currency: hm.currency || 'USD'
+    };
+  }
+
+  function analyze(incidents, team, catalog, opts) {
+    opts = opts || {};
+    team = team || {};
+    const hm = hoursModel(team);
+    const toilCfg = Object.assign({ threshold: 60, repetitiveMin: 5 }, team.toil || {});
+    const autoWords = ((team.toil && team.toil.keywords && team.toil.keywords.automatable) || DEFAULT_AUTOMATABLE).map(w => w.toLowerCase());
+    const teamMasks = compileTeamMasks(team);
+    const matchers = buildMatchers(catalog);
+    const now = opts.now ? new Date(opts.now) : new Date();
+
+    const dates = incidents.map(i => i.opened).filter(Boolean);
+    const from = dates.length ? new Date(Math.min.apply(null, dates)) : null;
+    const to = dates.length ? new Date(Math.max.apply(null, dates)) : null;
+    const days = from && to ? Math.max(1, (to - from) / 86400000 + 1) : 30;
+    const months = Math.max(1, days / 30.44);
+
+    // weekly buckets across data range (cap 26 weeks)
+    const weeks = [];
+    if (from && to) {
+      let w = weekStart(from); const end = weekStart(to);
+      while (w <= end && weeks.length < 260) { weeks.push(weekKey(w)); w = new Date(w.getTime() + 7 * 86400000); }
+    }
+    const weekIdx = new Map(weeks.map((k, i) => [k, i]));
+
+    const clusters = new Map();
+    for (const inc of incidents) {
+      const sig = matchCatalog(inc, matchers);
+      const masked = maskText(inc.short || (inc.description || '').slice(0, 200), team, teamMasks);
+      let id, name, key;
+      if (sig) { id = sig.id; name = sig.name; key = sig.id; }
+      else { key = signatureKey(masked); id = 'auto-' + fnv(key); name = key; }
+      let c = clusters.get(id);
+      if (!c) {
+        c = { id, name, key, masked, known: !!sig, catalog: sig || null, category: (sig && sig.category) || inferCategory(masked + ' ' + (inc.category || '')), incidents: [], groups: {}, cis: {}, weekly: new Array(weeks.length).fill(0), gapsHours: [], autoHits: 0, notesMasked: {}, techHours: 0, bizHours: 0, elapsedSamples: 0 };
+        clusters.set(id, c);
+      }
+      c.incidents.push(inc.idx);
+      if (inc.group) c.groups[inc.group] = (c.groups[inc.group] || 0) + 1;
+      if (inc.ci) c.cis[inc.ci] = (c.cis[inc.ci] || 0) + 1;
+      if (inc.opened && weekIdx.has(weekKey(inc.opened))) c.weekly[weekIdx.get(weekKey(inc.opened))]++;
+      const blob = ((inc.short || '') + ' ' + (inc.description || '') + ' ' + (inc.notes || '')).toLowerCase();
+      if (autoWords.some(w => blob.includes(w))) c.autoHits++;
+      if (inc.notes) { const nm = maskText(inc.notes, team, teamMasks).slice(0, 80); c.notesMasked[nm] = (c.notesMasked[nm] || 0) + 1; }
+      // hours
+      const cat = c.category;
+      const tech = (sig && sig.hours && sig.hours.technical != null) ? sig.hours.technical : (hm.byCategory[cat] != null ? hm.byCategory[cat] : hm.technicalPerIncident);
+      let biz;
+      if (inc.opened && inc.resolved && inc.resolved > inc.opened) { biz = clamp((inc.resolved - inc.opened) / 3600000, 0, hm.elapsedCapHours); c.elapsedSamples++; }
+      else biz = (sig && sig.hours && sig.hours.business != null) ? sig.hours.business : hm.businessPerIncident;
+      c.techHours += tech; c.bizHours += biz;
+      inc._sig = id; inc._masked = masked; inc._tech = tech; inc._biz = biz;
+    }
+
+    const out = [];
+    for (const c of clusters.values()) {
+      const incs = c.incidents.map(i => incidents[i]);
+      const times = incs.map(i => i.opened).filter(Boolean).sort((a, b) => a - b);
+      for (let i = 1; i < times.length; i++) c.gapsHours.push((times[i] - times[i - 1]) / 3600000);
+      const count = incs.length;
+      const rep = clamp(Math.log10(Math.max(count, 1)) / Math.log10(50), 0, 1);
+      const auto = count ? c.autoHits / count : 0;
+      const reg = c.gapsHours.length >= 3 ? clamp(1 - stats(c.gapsHours).cv / 2, 0, 1) : 0;
+      const noteVals = Object.values(c.notesMasked);
+      const uni = noteVals.length ? Math.max.apply(null, noteVals) / noteVals.reduce((a, b) => a + b, 0) : 0.5;
+      const score = Math.round(100 * (0.35 * rep + 0.30 * auto + 0.15 * reg + 0.20 * uni));
+      const flags = {
+        toil: score >= toilCfg.threshold && count >= 2,
+        repetitive: count >= toilCfg.repetitiveMin,
+        automatable: auto >= 0.5,
+        unknown: !c.known
+      };
+      const disposition = (c.catalog && c.catalog.disposition) || (flags.toil ? 'automate' : 'review');
+      const samples = pickSamples(incs, 5).map(i => ({ number: i.number, opened: i.opened ? i.opened.toISOString() : null, short: i.short, masked: i._masked, notes: (i.notes || '').slice(0, 240), ci: i.ci, group: i.group }));
+      const cluster = {
+        id: c.id, name: c.name, key: c.key, masked: c.masked, known: c.known, catalogId: c.catalog ? c.catalog.id : null,
+        category: c.category, count, perMonth: count / months,
+        firstSeen: times[0] ? times[0].toISOString() : null, lastSeen: times.length ? times[times.length - 1].toISOString() : null,
+        weekly: c.weekly, groups: c.groups, cis: c.cis, samples, incidents: c.incidents,
+        score, scoreParts: { repetition: +rep.toFixed(2), automatable: +auto.toFixed(2), regularity: +reg.toFixed(2), uniformity: +uni.toFixed(2) },
+        flags, disposition,
+        hours: { technical: +c.techHours.toFixed(2), business: +c.bizHours.toFixed(2), techPerInc: +(c.techHours / count).toFixed(2), bizPerInc: +(c.bizHours / count).toFixed(2), elapsedSamples: c.elapsedSamples },
+        automationHint: (c.catalog && c.catalog.automationHint) || null
+      };
+      cluster.component = inferComponent(cluster, team);
+      cluster.savings = projectSavings(cluster, team, cluster.disposition);
+      out.push(cluster);
+    }
+    out.sort((a, b) => (b.score * Math.log(b.count + 1)) - (a.score * Math.log(a.count + 1)));
+
+    const toilClusters = out.filter(c => c.flags.toil);
+    const toilIncidents = toilClusters.reduce((a, c) => a + c.count, 0);
+    const techHours = out.reduce((a, c) => a + c.hours.technical, 0);
+    const bizHours = out.reduce((a, c) => a + c.hours.business, 0);
+    const weeklyTotal = new Array(weeks.length).fill(0), weeklyToil = new Array(weeks.length).fill(0);
+    for (const c of out) c.weekly.forEach((n, i) => { weeklyTotal[i] += n; if (c.flags.toil) weeklyToil[i] += n; });
+    const byCategory = {}, byComponent = {};
+    for (const c of out) {
+      for (const [map, key] of [[byCategory, c.category], [byComponent, c.component]]) {
+        const b = map[key] = map[key] || { incidents: 0, toil: 0, technical: 0, business: 0, patterns: 0 };
+        b.incidents += c.count; if (c.flags.toil) b.toil += c.count; b.technical += c.hours.technical; b.business += c.hours.business; b.patterns++;
+      }
+    }
+
+    const kpis = {
+      incidents: incidents.length, clusters: out.length,
+      toilIncidents, toilClusters: toilClusters.length, toilPct: incidents.length ? Math.round(100 * toilIncidents / incidents.length) : 0,
+      unknownIncidents: out.filter(c => !c.known).reduce((a, c) => a + c.count, 0), unknownClusters: out.filter(c => !c.known).length,
+      technicalHours: +techHours.toFixed(1), businessHours: +bizHours.toFixed(1),
+      technicalUsd: Math.round(techHours * hm.rates.technical), businessUsd: Math.round(bizHours * hm.rates.business),
+      projectedSavedHoursPerMonth: +toilClusters.reduce((a, c) => a + c.savings.hoursPerMonth, 0).toFixed(1),
+      projectedSavedUsdPerYear: Math.round(toilClusters.reduce((a, c) => a + c.savings.usdPerYear, 0)),
+      months: +months.toFixed(2), days: Math.round(days), from: from ? from.toISOString() : null, to: to ? to.toISOString() : null,
+      currency: hm.currency, rates: hm.rates, threshold: toilCfg.threshold
+    };
+    return { version: VERSION, generatedAt: now.toISOString(), team: team.id || null, kpis, clusters: out, weeks, weeklyTotal, weeklyToil, byCategory, byComponent };
+  }
+
+  function pickSamples(incs, n) {
+    if (incs.length <= n) return incs;
+    const step = (incs.length - 1) / (n - 1); const out = [];
+    for (let i = 0; i < n; i++) out.push(incs[Math.round(i * step)]);
+    return out;
+  }
+  /* Map a cluster to one of the team's components.
+   * Teams that list CIs per component (components[].cis) are mapped from the CI field only, never from typed text:
+   * each incident votes for the component its CI belongs to (listed CI first, then components[].match tested
+   * against the CI name), or for 'unmapped'; the cluster takes the majority, ties going to the earlier component.
+   * Teams without CI lists keep the older behaviour: match regex over the pattern text, then tags. */
+  function componentForCI(ci, comps) {
+    const k = normKey(ci); if (!k) return null;
+    for (const c of comps) if ((c.cis || []).some(x => normKey(x) === k)) return c.name;
+    for (const c of comps) if (c.match) { try { if (new RegExp(c.match, 'i').test(String(ci))) return c.name; } catch (e) { /* bad regex */ } }
+    return null;
+  }
+  function inferComponent(cluster, team) {
+    const comps = (team && team.components) || [];
+    if (!comps.length) return 'unassigned';
+    if (comps.some(c => Array.isArray(c.cis) && c.cis.length)) {
+      const votes = {}, rank = name => { const i = comps.findIndex(c => c.name === name); return i < 0 ? comps.length : i; };
+      for (const [ci, n] of Object.entries(cluster.cis || {})) { const comp = componentForCI(ci, comps) || 'unmapped'; votes[comp] = (votes[comp] || 0) + n; }
+      const noCi = (cluster.count || 0) - Object.values(cluster.cis || {}).reduce((a, b) => a + b, 0);
+      if (noCi > 0) votes.unmapped = (votes.unmapped || 0) + noCi;
+      const ranked = Object.entries(votes).sort((a, b) => b[1] - a[1] || rank(a[0]) - rank(b[0]));
+      return ranked.length ? ranked[0][0] : 'unmapped';
+    }
+    const text = [cluster.name, cluster.masked, Object.keys(cluster.cis || {}).join(' '), Object.keys(cluster.groups || {}).join(' '), (cluster.samples || []).map(x => x.short).join(' ')].join(' ').toLowerCase();
+    for (const comp of comps) {
+      if (comp.match) { try { if (new RegExp(comp.match, 'i').test(text)) return comp.name; } catch (e) { /* bad regex: fall through to tags */ } }
+    }
+    for (const comp of comps) if ((comp.tags || []).some(t => text.includes(String(t).toLowerCase()))) return comp.name;
+    return 'unassigned';
+  }
+  function inferCategory(text) {
+    const t = text.toLowerCase();
+    if (/control-?m|ctm|batch|job|abend|datastage|spring batch/.test(t)) return 'batch';
+    if (/cert|ssl|tls|expir/.test(t)) return 'certificate';
+    if (/password|locked|unlock|credential|access|permission|login|sso|mfa/.test(t)) return 'access';
+    if (/kafka|mq |queue|topic|amq|lag|jms/.test(t)) return 'messaging';
+    if (/disk|filesystem|space|cpu|memory|heap|thread|pool|node|pod|ocp|openshift|jboss|wildfly/.test(t)) return 'platform';
+    if (/oracle|ora-|database|db |sql|tablespace/.test(t)) return 'database';
+    if (/mft|sftp|transfer|file/.test(t)) return 'file-transfer';
+    if (/apigee|api|5xx|4xx|gateway|timeout|latency/.test(t)) return 'api';
+    return 'other';
+  }
+  function projectSavings(cluster, team, disposition) {
+    const hm = hoursModel(team);
+    const f = DISPOSITIONS[disposition || cluster.disposition] || 0;
+    const tech = cluster.hours.techPerInc * cluster.perMonth * f;
+    const biz = cluster.hours.bizPerInc * cluster.perMonth * f;
+    return { factor: f, techHoursPerMonth: +tech.toFixed(2), bizHoursPerMonth: +biz.toFixed(2), hoursPerMonth: +(tech + biz).toFixed(2), usdPerYear: Math.round(12 * (tech * hm.rates.technical + biz * hm.rates.business)) };
+  }
+
+  // ---------- Ledger ----------
+  function newLedger(teamId) { return { version: 1, team: teamId, updatedAt: new Date().toISOString(), offenders: {}, ai: { runs: 0, costUsd: 0 } }; }
+  function registerOffender(ledger, cluster, opts) {
+    opts = opts || {};
+    const now = opts.now || new Date().toISOString();
+    let o = ledger.offenders[cluster.id];
+    if (!o) {
+      o = ledger.offenders[cluster.id] = { id: cluster.id, name: cluster.name, category: cluster.category, state: 'detected', disposition: cluster.disposition, auto: !!opts.auto, createdAt: now, history: [{ state: 'detected', at: now, by: opts.by || 'analysis', note: opts.auto ? 'auto-registered (toil candidate)' : (opts.note || '') }], baseline: null, latest: null, jira: '', mr: '', owner: '', notes: '', ai: { runs: 0, costUsd: 0, lastVerdict: null, at: null }, windows: [] };
+    }
+    o.name = cluster.name; o.category = cluster.category;
+    o.latest = { count: cluster.count, perMonth: +cluster.perMonth.toFixed(2), lastSeen: cluster.lastSeen, at: now };
+    if (!o.baseline) o.baseline = { perMonth: +cluster.perMonth.toFixed(2), techPerInc: cluster.hours.techPerInc, bizPerInc: cluster.hours.bizPerInc, count: cluster.count, at: now };
+    ledger.updatedAt = now;
+    return o;
+  }
+  function transition(ledger, id, toState, meta) {
+    meta = meta || {};
+    const o = ledger.offenders[id];
+    if (!o) throw new Error('unknown offender ' + id);
+    if (!STATES.includes(toState)) throw new Error('unknown state ' + toState);
+    const now = meta.now || new Date().toISOString();
+    const from = o.state;
+    o.state = toState;
+    if (meta.jira != null) o.jira = meta.jira;
+    if (meta.mr != null) o.mr = meta.mr;
+    if (meta.owner != null) o.owner = meta.owner;
+    if (meta.disposition) o.disposition = meta.disposition;
+    if (toState === 'fixed') o.fixedAt = now;
+    if (toState === 'verified') o.verifiedAt = now;
+    o.history.push({ state: toState, from, at: now, by: meta.by || 'ui', note: meta.note || '' });
+    ledger.updatedAt = now;
+    return { from, to: toState, offender: o };
+  }
+  /* The baseline this load would give. It is set once, on first sighting, so a bad first load (duplicates, another
+   * team's incidents) sticks until someone rebaselines. For an offender that has been fixed, only incidents opened
+   * before the fix count, over the part of the window before the fix, so rebaselining never erases real savings. */
+  function baselineFrom(offender, analysis, incidents) {
+    const c = analysis && analysis.clusters.find(x => x.id === offender.id);
+    if (!c) return { error: 'This pattern is not in the loaded data. Load data that contains it to rebaseline.' };
+    const from = analysis.kpis.from ? new Date(analysis.kpis.from) : null, to = analysis.kpis.to ? new Date(analysis.kpis.to) : null;
+    const fixed = offender.fixedAt && ['fixed', 'verified', 'regressed'].includes(offender.state) ? new Date(offender.fixedAt) : null;
+    if (!fixed) return { baseline: { perMonth: +c.perMonth.toFixed(2), techPerInc: c.hours.techPerInc, bizPerInc: c.hours.bizPerInc, count: c.count }, window: { from: analysis.kpis.from, to: analysis.kpis.to, preFix: false } };
+    if (!from || fixed - from < 14 * 86400000) return { error: `The loaded data needs at least two weeks before the fix on ${offender.fixedAt.slice(0, 10)} to measure a baseline.` };
+    const end = to && to < fixed ? to : fixed;
+    const count = c.incidents.map(i => incidents[i]).filter(i => i && i.opened && i.opened < fixed).length;
+    const months = ((end - from) / 86400000 + 1) / 30.44;
+    return { baseline: { perMonth: +(count / months).toFixed(2), techPerInc: c.hours.techPerInc, bizPerInc: c.hours.bizPerInc, count }, window: { from: analysis.kpis.from, to: end.toISOString(), preFix: true } };
+  }
+  function rebaseline(ledger, id, analysis, incidents, meta) {
+    meta = meta || {};
+    const o = ledger.offenders[id];
+    if (!o) throw new Error('unknown offender ' + id);
+    const r = baselineFrom(o, analysis, incidents);
+    if (r.error) throw new Error(r.error);
+    const now = meta.now || new Date().toISOString(), previous = o.baseline || null;
+    o.baseline = Object.assign({}, r.baseline, { at: now, rebaselined: true, window: r.window });
+    o.history.push({ state: o.state, from: null, action: 'rebaseline', at: now, by: meta.by || 'ui', previous, note: `Rebaselined from ${previous ? previous.perMonth : 'none'} to ${o.baseline.perMonth} a month${r.window.preFix ? ' (incidents before the fix)' : ''}${meta.note ? '. ' + meta.note : ''}` });
+    ledger.updatedAt = now;
+    return { offender: o, previous, baseline: o.baseline };
+  }
+  /* Advance fixed → verified (two clean windows) and verified → regressed (incidents after verification). */
+  function advanceLedger(ledger, analysis, incidents, opts) {
+    opts = opts || {};
+    const now = opts.now ? new Date(opts.now) : new Date();
+    const windowDays = opts.windowDays || 7, cleanWindows = opts.cleanWindows || 2;
+    const byId = new Map(analysis.clusters.map(c => [c.id, c]));
+    const events = [];
+    for (const o of Object.values(ledger.offenders)) {
+      const c = byId.get(o.id);
+      const nowIso = now.toISOString();
+      if (c) o.latest = { count: c.count, perMonth: +c.perMonth.toFixed(2), lastSeen: c.lastSeen, at: nowIso };
+      else if (analysis.kpis.incidents) o.latest = { count: 0, perMonth: 0, lastSeen: o.latest ? o.latest.lastSeen : null, at: nowIso };
+      const since = (o.state === 'fixed' || o.state === 'verified') ? (o.fixedAt || o.verifiedAt) : null;
+      if (!since) continue;
+      const sinceD = new Date(since);
+      const after = c ? c.incidents.map(i => incidents[i]).filter(i => i.opened && i.opened > sinceD) : [];
+      // rate since the fix — this is what "verified savings" is measured against, not the whole data window
+      const monthsSince = Math.max(0.25, (now - sinceD) / (30.44 * 86400000));
+      if (o.latest) o.latest.postFix = { since, count: after.length, perMonth: +(after.length / monthsSince).toFixed(2) };
+      if (o.state === 'fixed') {
+        const fullWindows = Math.floor((now - sinceD) / (windowDays * 86400000));
+        o.windows = []; for (let w = 0; w < fullWindows; w++) { const s = new Date(sinceD.getTime() + w * windowDays * 86400000), e = new Date(s.getTime() + windowDays * 86400000); o.windows.push({ start: s.toISOString(), end: e.toISOString(), count: after.filter(i => i.opened >= s && i.opened < e).length }); }
+        if (fullWindows >= cleanWindows && o.windows.slice(-cleanWindows).every(w => w.count === 0)) events.push(transition(ledger, o.id, 'verified', { by: 'auto', note: `${cleanWindows} clean windows of ${windowDays}d`, now: nowIso }));
+      } else if (o.state === 'verified' && after.length > 0) {
+        events.push(transition(ledger, o.id, 'regressed', { by: 'auto', note: `${after.length} incident(s) after verification`, now: nowIso }));
+      }
+    }
+    return events;
+  }
+  function ledgerSummary(ledger, team) {
+    const hm = hoursModel(team);
+    const s = { byState: {}, hoursSavedProjectedPerMonth: 0, hoursSavedVerifiedPerMonth: 0, usdSavedProjectedPerYear: 0, usdSavedVerifiedPerYear: 0, aiRuns: (ledger.ai && ledger.ai.runs) || 0, aiCostUsd: +(((ledger.ai && ledger.ai.costUsd) || 0).toFixed(2)), aiLifetimeCostUsd: +(((ledger.ai && (ledger.ai.lifetimeCostUsd != null ? ledger.ai.lifetimeCostUsd : ledger.ai.costUsd)) || 0).toFixed(2)), aiMonth: (ledger.ai && ledger.ai.month) || null, offenders: Object.keys(ledger.offenders).length };
+    STATES.forEach(st => s.byState[st] = 0);
+    for (const o of Object.values(ledger.offenders)) {
+      s.byState[o.state] = (s.byState[o.state] || 0) + 1;
+      const b = o.baseline; if (!b) continue;
+      const f = DISPOSITIONS[o.disposition] || 0;
+      const hrs = b.perMonth * (b.techPerInc + b.bizPerInc) * f;
+      const usd = 12 * b.perMonth * f * (b.techPerInc * hm.rates.technical + b.bizPerInc * hm.rates.business);
+      if (['ticketed', 'fixed', 'verified'].includes(o.state)) { s.hoursSavedProjectedPerMonth += hrs; s.usdSavedProjectedPerYear += usd; }
+      if (o.state === 'verified') { const actual = o.latest ? (o.latest.postFix ? o.latest.postFix.perMonth : o.latest.perMonth) : 0; const red = Math.max(0, b.perMonth - actual); s.hoursSavedVerifiedPerMonth += red * (b.techPerInc + b.bizPerInc); s.usdSavedVerifiedPerYear += 12 * red * (b.techPerInc * hm.rates.technical + b.bizPerInc * hm.rates.business); }
+    }
+    ['hoursSavedProjectedPerMonth', 'hoursSavedVerifiedPerMonth'].forEach(k => s[k] = +s[k].toFixed(1));
+    ['usdSavedProjectedPerYear', 'usdSavedVerifiedPerYear'].forEach(k => s[k] = Math.round(s[k]));
+    return s;
+  }
+
+  // ---------- Claude packet ----------
+  const VERDICT_SCHEMA = {
+    type: 'object',
+    properties: {
+      disposition: { type: 'string', enum: ['eliminate', 'automate', 'selfheal', 'tune', 'accept'] },
+      confidence: { type: 'number', minimum: 0, maximum: 1 },
+      root_cause: { type: 'string' },
+      fix_type: { type: 'string', enum: ['aap-job-template', 'code-change', 'config-change', 'alert-tuning', 'runbook', 'vendor', 'process', 'none'] },
+      fix_summary: { type: 'string' },
+      hours_est: { type: 'number' },
+      jira_title: { type: 'string' },
+      jira_description: { type: 'string' },
+      evidence: { type: 'array', items: { type: 'string' } },
+      risks: { type: 'array', items: { type: 'string' } }
+    },
+    required: ['disposition', 'confidence', 'root_cause', 'fix_type', 'fix_summary', 'jira_title']
+  };
+  function buildPacket(cluster, team, analysis, extra) {
+    return Object.assign({
+      tool: 'toil-analyzer', version: VERSION, team: team.id, teamName: team.name,
+      offender: { id: cluster.id, name: cluster.name, category: cluster.category, known: cluster.known, catalogId: cluster.catalogId, automationHint: cluster.automationHint, count: cluster.count, perMonth: +cluster.perMonth.toFixed(2), firstSeen: cluster.firstSeen, lastSeen: cluster.lastSeen, score: cluster.score, scoreParts: cluster.scoreParts, weekly: cluster.weekly.slice(-12), groups: cluster.groups, cis: cluster.cis, hours: cluster.hours, disposition: cluster.disposition },
+      samples: cluster.samples,
+      context: { apps: team.apps || [], components: team.components || [], jobPrefixes: team.jobPrefixes || [], runbooks: team.runbooks || [], jira: team.jira || null },
+      dataWindow: analysis ? { from: analysis.kpis.from, to: analysis.kpis.to, incidents: analysis.kpis.incidents } : null,
+      rules: ['Evidence stays shallow: high-level error and initial analysis only.', 'Do not fetch full logs; summarize what the samples already show.', 'Prefer fixes the team can ship: AAP job template, config change, alert tuning.', 'Return only the JSON object requested.']
+    }, extra || {});
+  }
+  function packetPrompt(packet) {
+    return [
+      'You are the toil-analyzer disposition step for an SRE / production support team.',
+      'Read the offender packet and decide how this recurring incident pattern should be handled.',
+      'Respond with ONLY a JSON object (no prose, no markdown fences) matching this schema:',
+      JSON.stringify(VERDICT_SCHEMA),
+      'Disposition meanings: eliminate = remove the cause so incidents stop; automate = a job/template does the manual step; selfheal = detection triggers the fix automatically; tune = reduce noise/alert thresholds; accept = leave as is.',
+      'Packet:',
+      JSON.stringify(packet)
+    ].join('\n');
+  }
+  function parseVerdict(text) {
+    if (!text) return null;
+    if (typeof text === 'object') return text;
+    let s = String(text).trim().replace(/^```(json)?/i, '').replace(/```$/, '').trim();
+    try { return JSON.parse(s); } catch (e) { /* fall through */ }
+    const a = s.indexOf('{'), b = s.lastIndexOf('}');
+    if (a >= 0 && b > a) { try { return JSON.parse(s.slice(a, b + 1)); } catch (e) { /* ignore */ } }
+    return null;
+  }
+
+  // ---------- Report ----------
+  function fmt(n, d) { return Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: d == null ? 1 : d }); }
+  function renderReport(analysis, ledger, team, opts) {
+    opts = opts || {};
+    const k = analysis.kpis, ls = ledgerSummary(ledger, team), cur = k.currency || 'USD';
+    const top = analysis.clusters.filter(c => c.flags.toil).slice(0, opts.top || 15);
+    const lines = [];
+    lines.push(`# Toil report — ${team.name || team.id}`, '', `Generated ${analysis.generatedAt.slice(0, 16).replace('T', ' ')} · data ${k.from ? k.from.slice(0, 10) : '?'} to ${k.to ? k.to.slice(0, 10) : '?'} (${k.days} days, ${k.incidents} incidents)`, '');
+    lines.push('## Headline', '', `| Metric | Value |`, `|---|---|`,
+      `| Incidents analyzed | ${k.incidents} |`, `| Toil candidates | ${k.toilIncidents} incidents in ${k.toilClusters} patterns (${k.toilPct}%) |`,
+      `| Technical hours (ops effort) | ${fmt(k.technicalHours)} h ≈ ${cur} ${fmt(k.technicalUsd, 0)} |`, `| Business hours (waiting / manual) | ${fmt(k.businessHours)} h ≈ ${cur} ${fmt(k.businessUsd, 0)} |`,
+      `| Projected savings (all candidates) | ${fmt(k.projectedSavedHoursPerMonth)} h/month ≈ ${cur} ${fmt(k.projectedSavedUsdPerYear, 0)}/yr |`,
+      `| Committed savings (ticketed+fixed+verified) | ${fmt(ls.hoursSavedProjectedPerMonth)} h/month ≈ ${cur} ${fmt(ls.usdSavedProjectedPerYear, 0)}/yr |`,
+      `| Verified savings | ${fmt(ls.hoursSavedVerifiedPerMonth)} h/month ≈ ${cur} ${fmt(ls.usdSavedVerifiedPerYear, 0)}/yr |`,
+      `| AI spend | ${ls.aiRuns} runs this month, ${cur} ${fmt(ls.aiCostUsd, 2)} (lifetime ${cur} ${fmt(ls.aiLifetimeCostUsd, 2)}) |`, '');
+    const breakdown = (title, map) => { const rows = Object.entries(map || {}).sort((a, b) => (b[1].technical + b[1].business) - (a[1].technical + a[1].business)); if (!rows.length) return; lines.push(`## ${title}`, '', '| ' + title.split(' ').pop() + ' | Incidents | Toil | Technical h | Business h |', '|---|---|---|---|---|'); rows.forEach(([k2, b]) => lines.push(`| ${k2} | ${b.incidents} | ${b.toil} | ${fmt(b.technical)} | ${fmt(b.business)} |`)); lines.push(''); };
+    breakdown('Hours by category', analysis.byCategory);
+    if (Object.keys(analysis.byComponent || {}).some(k2 => k2 !== 'unassigned')) breakdown('Hours by component', analysis.byComponent);
+    lines.push('## Kill chain', '', `| ${STATES.map(s => STATE_LABEL[s]).join(' | ')} |`, `|${STATES.map(() => '---').join('|')}|`, `| ${STATES.map(s => ls.byState[s] || 0).join(' | ')} |`, '');
+    lines.push('## Top offenders', '', '| # | Pattern | Category | Count | /month | Score | Disposition | State | Saves h/mo |', '|---|---|---|---|---|---|---|---|---|');
+    top.forEach((c, i) => { const o = ledger.offenders[c.id]; lines.push(`| ${i + 1} | ${c.name.replace(/\|/g, '/')} | ${c.category} | ${c.count} | ${fmt(c.perMonth)} | ${c.score} | ${DISPOSITION_LABEL[c.disposition] || c.disposition} | ${o ? STATE_LABEL[o.state] : '—'} | ${fmt(c.savings.hoursPerMonth)} |`); });
+    lines.push('', '## Unknown patterns', '', `${k.unknownClusters} patterns (${k.unknownIncidents} incidents) matched no shared signature. Propose signatures from the Offenders view to close the gap.`, '');
+    const recent = Object.values(ledger.offenders).flatMap(o => o.history.map(h => Object.assign({ id: o.id, name: o.name }, h))).filter(h => h.from).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 15);
+    if (recent.length) { lines.push('## Recent movement', ''); recent.forEach(h => lines.push(`- ${h.at.slice(0, 10)} · ${h.name} · ${STATE_LABEL[h.from] || h.from} → ${STATE_LABEL[h.state]}${h.note ? ' · ' + h.note : ''}`)); lines.push(''); }
+    return lines.join('\n');
+  }
+
+  // ---------- Dynatrace ----------
+  function dim(v) { return String(v == null ? '' : v).replace(/[^A-Za-z0-9_.:-]+/g, '_').slice(0, 250) || 'unknown'; }
+  function metricsLines(analysis, ledger, team, opts) {
+    opts = opts || {};
+    const base = Object.assign({ team: team.id }, (team.dynatrace && team.dynatrace.dimensions) || {});
+    const dims = Object.entries(base).map(([k, v]) => `${dim(k)}=${dim(v)}`).join(',');
+    const ts = opts.ts ? ' ' + opts.ts : '';
+    const k = analysis.kpis, ls = ledgerSummary(ledger, team);
+    const L = [];
+    const g = (m, v, extra) => L.push(`${m},${dims}${extra ? ',' + extra : ''} gauge,${Number(v || 0)}${ts}`);
+    // Every value is a gauge: each push re-describes the rolling analysis window, so deltas would double-count on re-runs.
+    g('toil.incidents', k.incidents); g('toil.candidates', k.toilIncidents); g('toil.window.days', k.days);
+    g('toil.candidates.pct', k.toilPct);
+    g('toil.hours.technical', k.technicalHours); g('toil.hours.business', k.businessHours);
+    g('toil.usd.technical', k.technicalUsd); g('toil.usd.business', k.businessUsd);
+    g('toil.hours.saved.projected', ls.hoursSavedProjectedPerMonth); g('toil.hours.saved.verified', ls.hoursSavedVerifiedPerMonth);
+    g('toil.usd.saved.projected', ls.usdSavedProjectedPerYear); g('toil.usd.saved.verified', ls.usdSavedVerifiedPerYear);
+    g('toil.ai.cost_usd', ls.aiCostUsd); g('toil.ai.runs', ls.aiRuns);
+    STATES.forEach(st => g('toil.ledger.offenders', ls.byState[st] || 0, `state=${st}`));
+    Object.entries(analysis.byCategory || {}).forEach(([cat, b]) => { g('toil.category.incidents', b.incidents, `category=${dim(cat)}`); g('toil.category.hours.technical', +b.technical.toFixed(1), `category=${dim(cat)}`); g('toil.category.hours.business', +b.business.toFixed(1), `category=${dim(cat)}`); });
+    Object.entries(analysis.byComponent || {}).forEach(([comp, b]) => { g('toil.component.incidents', b.incidents, `component=${dim(comp)}`); g('toil.component.hours.technical', +b.technical.toFixed(1), `component=${dim(comp)}`); g('toil.component.hours.business', +b.business.toFixed(1), `component=${dim(comp)}`); });
+    return L;
+  }
+  function bizevent(team, offender, from, to, meta) {
+    meta = meta || {};
+    return Object.assign({
+      'event.type': 'toil.milestone', 'event.provider': 'toil-analyzer',
+      team: team.id, bu: (team.dynatrace && team.dynatrace.dimensions && team.dynatrace.dimensions.bu) || undefined,
+      signature: offender.id, pattern: offender.name, category: offender.category,
+      from_state: from, to_state: to, disposition: offender.disposition,
+      jira: offender.jira || undefined, mr: offender.mr || undefined,
+      baseline_per_month: offender.baseline ? offender.baseline.perMonth : undefined,
+      hours_saved_per_month: offender.baseline ? +(offender.baseline.perMonth * (offender.baseline.techPerInc + offender.baseline.bizPerInc) * (DISPOSITIONS[offender.disposition] || 0)).toFixed(2) : undefined,
+      timestamp: meta.at || new Date().toISOString()
+    }, meta.extra || {});
+  }
+
+  // ---------- Demo data ----------
+  function demoCSV(seed, days) {
+    let s = (seed || 7) >>> 0; const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+    const pick = a => a[Math.floor(rnd() * a.length)];
+    days = days || 90;
+    const now = new Date(); now.setMinutes(0, 0, 0);
+    const T = [
+      { w: 22, cat: 'Batch', grp: 'PROD-SUPPORT-LOANS', ci: 'LoanServicing-Batch', per: 'daily', tech: [20, 45], biz: [1, 6], mk: () => { const j = pick(['CTM_LN_ACQ_FEED_D', 'CTM_LN_PAYOFF_EXTRACT', 'CTM_LN_GL_POST', 'CTM_LN_STMT_GEN', 'CTM_PAY_ACH_OUT']); return [`Control-M job ${j} ended NOT OK (RC=${pick([8, 12, 16])})`, `Job ${j} failed in stage LOAD on ctmagt-p${pick([1, 2, 3])}.corp.local. Return code ${pick([8, 12])}. Downstream jobs on hold.`, pick(['Reran job after clearing lock file. Completed OK.', 'Rerun from step 3, completed.', 'Manually rerun, success.'])]; } },
+      { w: 9, cat: 'Certificate', grp: 'PROD-SUPPORT-PLATFORM', ci: 'Apigee-Gateway', per: 'weekly', tech: [60, 180], biz: [4, 24], mk: () => { const h = pick(['api-gw-p03', 'lnsvc-app-p07', 'pay-svc-p02', 'ws-ocp-ing-p1']); return [`Certificate for ${h}.corp.local expires in ${pick([7, 14, 21])} days`, `TLS certificate on ${h}.corp.local expiring ${pick(['2026-09-30', '2026-10-05', '2026-10-12'])}. Renewal required via Delinea request.`, 'Renewed cert, deployed keystore, restarted service. Validated with openssl.']; } },
+      { w: 14, cat: 'Access', grp: 'PROD-SUPPORT-LOANS', ci: 'LoanServicing-API', per: 'weekly', tech: [15, 40], biz: [1, 8], mk: () => { const a = pick(['svc_batch_ora', 'svc_ws_ad', 'svc_mft_xfer', 'svc_kafka_ln']); return [`Service account ${a} locked / password expired`, `Account ${a} locked out after failed logins on ora-p${pick([1, 2])}. Application errors ORA-28000.`, pick(['Unlocked account and reset password via Delinea. Restarted ECS service.', 'Password rotated, secret updated in Secrets Manager, forced deployment.'])]; } },
+      { w: 7, cat: 'Platform', grp: 'PROD-SUPPORT-PLATFORM', ci: 'WS-JBoss', per: 'random', tech: [30, 120], biz: [2, 8], mk: () => { const n = pick(['ws-jb-p04', 'ws-jb-p07', 'ws-jb-p11']); return [`JBoss thread pool exhausted on ${n}`, `Default thread pool max reached on ${n} (200/200). SOAP backend timeouts. Heap at ${70 + Math.floor(rnd() * 25)}%.`, 'Recycled JBoss instance, threads released.']; } },
+      { w: 8, cat: 'Messaging', grp: 'PROD-SUPPORT-AWS', ci: 'Payments-Kafka', per: 'random', tech: [20, 60], biz: [1, 4], mk: () => { const t = pick(['payments.events', 'loan.status.changed', 'ln.notifications']); return [`Kafka consumer lag above threshold for topic ${t}`, `Consumer group ${t}-cg lag ${1000 + Math.floor(rnd() * 20000)} on msk-p1. Lambda throttled.`, 'Increased Lambda concurrency, lag drained.']; } },
+      { w: 6, cat: 'Messaging', grp: 'PROD-SUPPORT-PLATFORM', ci: 'WS-MQ', per: 'random', tech: [15, 45], biz: [1, 3], mk: () => { const q = pick(['QL.INBOUND.LOAN', 'QL.OUT.STATEMENTS', 'QL.PAY.ACK']); return [`MQ queue depth high ${q}`, `Queue ${q} depth ${3000 + Math.floor(rnd() * 5000)} on qm-p01. Consumer stopped.`, 'Restarted MQ listener, queue drained.']; } },
+      { w: 7, cat: 'File Transfer', grp: 'PROD-SUPPORT-LOANS', ci: 'MFT', per: 'daily', tech: [15, 40], biz: [2, 10], mk: () => { const f = `LN_EXTRACT_${20260601 + Math.floor(rnd() * 300)}.csv`; return [`MFT transfer failed for file ${f}`, `Outbound transfer of ${f} to vendor SFTP failed: connection reset. Retry count 3.`, 'Resubmitted transfer manually. Delivered.']; } },
+      { w: 5, cat: 'API', grp: 'PROD-SUPPORT-AWS', ci: 'Apigee-Gateway', per: 'random', tech: [30, 90], biz: [1, 3], mk: () => { const p = pick(['/v1/accounts', '/v1/payoff-quote', '/v1/payments']); return [`Apigee 5xx spike on ${p}`, `Target 503 for ${p} (${Math.floor(rnd() * 40)}% of calls) between ${pick(['02:00', '14:10', '19:45'])} and ${pick(['02:20', '14:35', '20:10'])}. ECS tasks recycled.`, 'Transient. ECS scaled, errors cleared.']; } },
+      { w: 5, cat: 'Database', grp: 'PROD-SUPPORT-DBA', ci: 'Oracle-LNSVC', per: 'random', tech: [40, 120], biz: [2, 6], mk: () => [`ORA-01555 snapshot too old in batch on ora-p${pick([1, 2])}`, `Batch reader hit ORA-01555 during long-running extract. Undo retention ${pick([900, 1800])}.`, 'Reran extract off-peak.'] },
+      { w: 6, cat: 'Platform', grp: 'PROD-SUPPORT-PLATFORM', ci: 'OpenShift-Prod', per: 'random', tech: [10, 30], biz: [0.5, 2], mk: () => { const n = pick(['ocp-worker-12', 'ocp-worker-04', 'ocp-worker-19']); return [`Disk space ${88 + Math.floor(rnd() * 10)}% on ${n}`, `/var/lib/containers on ${n} above threshold. Image garbage collection lagging.`, 'Pruned images, space reclaimed.']; } },
+      { w: 11, cat: 'Other', grp: 'PROD-SUPPORT-LOANS', ci: 'LoanServicing-UI', per: 'random', tech: [20, 90], biz: [1, 8], mk: () => [pick(['User unable to open statement PDF', 'Payoff quote shows wrong date', 'Customer address update not reflecting', 'Report export timing out for large branch', 'Login page slow for internal users']), 'Reported by business user. Investigated logs and user session.', pick(['User error, guided.', 'Data fix applied.', 'Cache cleared.', 'Escalated to dev.'])] }
+    ];
+    const total = T.reduce((a, t) => a + t.w, 0);
+    const rows = []; let n = 1000;
+    for (let d = days; d >= 0; d--) {
+      const day = new Date(now.getTime() - d * 86400000);
+      const dow = day.getDay();
+      const perDay = 4 + Math.floor(rnd() * 5) + (dow === 1 ? 3 : 0) + (day.getDate() >= 28 ? 3 : 0);
+      for (let i = 0; i < perDay; i++) {
+        let r = rnd() * total, t = T[0]; for (const x of T) { r -= x.w; if (r <= 0) { t = x; break; } }
+        if (t.per === 'daily' && rnd() < 0.35) continue;
+        const [short, desc, notes] = t.mk();
+        const open = new Date(day.getTime() + Math.floor(rnd() * 24) * 3600000 + Math.floor(rnd() * 60) * 60000);
+        if (open > now) continue;
+        const bizH = t.biz[0] + rnd() * (t.biz[1] - t.biz[0]);
+        const res = new Date(open.getTime() + bizH * 3600000);
+        rows.push({ number: `INC00${++n}`, short_description: short, description: desc, opened_at: fmtSN(open), resolved_at: res <= now ? fmtSN(res) : '', assignment_group: t.grp, cmdb_ci: t.ci, category: t.cat, priority: pick(['3 - Moderate', '3 - Moderate', '2 - High', '4 - Low']), close_notes: res <= now ? notes : '', state: res <= now ? 'Closed' : 'In Progress' });
+      }
+    }
+    rows.sort((a, b) => a.opened_at.localeCompare(b.opened_at));
+    return toCSV(rows, ['number', 'short_description', 'description', 'opened_at', 'resolved_at', 'assignment_group', 'cmdb_ci', 'category', 'priority', 'close_notes', 'state']);
+  }
+  function fmtSN(d) { const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; }
+
+  // ---------- Signature proposals ----------
+  function proposeSignature(cluster, team, author) {
+    const words = cluster.masked.split(' ').filter(t => t.length > 2 && !STOP.has(t) && !/^[<#]/.test(t)).slice(0, 4);
+    const regex = words.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*');
+    return {
+      id: 'sig-' + fnv(cluster.key).slice(0, 8), name: cluster.name.slice(0, 80), category: cluster.category, priority: 10,
+      match: { regex: regex || cluster.masked.slice(0, 40), flags: 'i', fields: ['short', 'description'] },
+      disposition: cluster.disposition === 'review' ? 'automate' : cluster.disposition,
+      hours: { technical: cluster.hours.techPerInc, business: cluster.hours.bizPerInc },
+      automationHint: '', samples: cluster.samples.slice(0, 3).map(s => s.short).filter(Boolean),
+      proposedBy: author || team.id, proposedFrom: team.id, proposedAt: new Date().toISOString(), evidence: { count: cluster.count, perMonth: +cluster.perMonth.toFixed(2), score: cluster.score }
+    };
+  }
+
+  return { VERSION, LOAD_CHECK, dedupeIncidents, ownershipMap, scopeIncidents, checkLoad, prepareLoad, baselineFrom, rebaseline, componentForCI, STATES, STATE_LABEL, DISPOSITIONS, DISPOSITION_LABEL, FIELDS, FIELD_LABEL, VERDICT_SCHEMA, parseCSV, toCSV, detectMapping, parseDate, normalizeIncidents, maskText, signatureKey, buildMatchers, matchCatalog, analyze, projectSavings, hoursModel, newLedger, registerOffender, transition, advanceLedger, ledgerSummary, buildPacket, packetPrompt, parseVerdict, renderReport, metricsLines, bizevent, demoCSV, proposeSignature, inferComponent, fnv, weekKey };
+});
+
+</script>
+<!-- @endinline:core -->
+<!-- @inline:app -->
+<script>
+/* Toil Analyzer UI — everything runs here; the server (when present) only lends hands: files, git, Claude, APIs. */
+(function () {
+  'use strict';
+  const C = window.ToilCore;
+  const $ = s => document.querySelector(s), $$ = s => Array.from(document.querySelectorAll(s));
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const fmt = (n, d) => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: d == null ? 1 : d });
+  const money = n => (S.team && S.team.hoursModel && S.team.hoursModel.currency === 'USD' ? '$' : ((S.team && S.team.hoursModel && S.team.hoursModel.currency) || '') + ' ') + fmt(n, 0);
+  const dt = s => s ? String(s).slice(0, 10) : '—';
+
+  const S = { mode: 'lite', status: null, teams: [], team: null, catalog: [], proposed: [], raw: null, mapping: {}, incidents: [], analysis: null, ledger: null, exec: null, view: 'exec', selected: null, sort: { off: ['rank', 1], led: ['state', 1] }, fileName: '', whatIf: 5, norm: [], allIncidents: [], load: null, baseLedger: null, isDemo: false };
+
+  // ---------- boot ----------
+  async function boot() {
+    const embeddedTeam = safeJSON($('#embedded-team').textContent, null);
+    S.catalog = safeJSON($('#embedded-catalog').textContent, []) || [];
+    if (location.protocol.startsWith('http')) {
+      try { S.status = await api('GET', '/api/status'); S.mode = 'connected'; } catch (e) { S.mode = 'lite'; }
+    }
+    if (S.mode === 'connected') {
+      S.teams = await api('GET', '/api/teams');
+      const sig = await api('GET', '/api/signatures'); S.catalog = sig.catalog; S.proposed = sig.proposed;
+      $('#modeChip').textContent = 'Connected'; $('#modeChip').className = 'chip lime';
+      $('#modeText').textContent = (S.status.git && S.status.git.available ? S.status.git.branch + (S.status.git.dirty ? ' · edits' : '') : 'repo');
+      $('#btnSync').classList.remove('hide'); $('#btnCommit').classList.remove('hide'); $('#btnReportSave').classList.remove('hide');
+      if (S.status.env.dynatrace) $('#btnPush').classList.remove('hide');
+      if (S.status.env.servicenow) $('#btnPull').classList.remove('hide');
+      if (S.status.env.jira) $('#btnJira').classList.remove('hide');
+      $('#dataSel').classList.remove('hide');
+      api('GET', '/api/exec').then(x => { S.exec = x; if (S.view === 'exec') renderExec(); }).catch(() => {});
+    } else {
+      const local = localTeams();
+      S.teams = [embeddedTeam].filter(t => t && t.id).concat(local.filter(t => !embeddedTeam || t.id !== embeddedTeam.id));
+      $('#modeText').textContent = 'Runs from this file. Ledger saved in this browser.';
+    }
+    if (!S.teams.length) S.teams = [{ id: 'my-team', name: 'My team', servicenow: { assignmentGroups: [] }, hoursModel: { rates: { technical: 85, business: 60 } } }];
+    renderTeamSelect();
+    await selectTeam(localStorage.getItem('ta:lastTeam') || S.teams[0].id);
+    wire();
+    render();
+  }
+  function safeJSON(s, fb) { try { return JSON.parse(s); } catch (e) { return fb; } }
+  async function api(method, path, body) {
+    const res = await fetch(path, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+    const text = await res.text(); let data; try { data = JSON.parse(text); } catch (e) { data = text; }
+    if (!res.ok) throw new Error((data && data.error) || ('HTTP ' + res.status));
+    return data;
+  }
+  function localTeams() { return Object.keys(localStorage).filter(k => k.startsWith('ta:team:')).map(k => safeJSON(localStorage.getItem(k), null)).filter(Boolean); }
+
+  async function selectTeam(id) {
+    let team = S.teams.find(t => t.id === id) || S.teams[0];
+    if (S.mode === 'lite') { const o = safeJSON(localStorage.getItem('ta:team:' + team.id), null); if (o) team = o; }
+    S.team = team; localStorage.setItem('ta:lastTeam', team.id);
+    $('#teamSel').value = team.id;
+    adoptLedger(await readSavedLedger(team.id));
+    if (S.mode === 'connected') { try { const files = await api('GET', '/api/data?team=' + team.id); const sel = $('#dataSel'); sel.innerHTML = '<option value="">Open from data/…</option>' + files.map(f => `<option value="${esc(f.name)}">${esc(f.name)} (${fmt(f.size / 1024, 0)} KB)</option>`).join(''); } catch (e) { /* ignore */ } }
+    // Loaded data is re-scoped to the new team: its own groups only, and its own check before anything is saved.
+    if (S.norm.length) { S.load.confirmed = false; prepare(); runAnalysis(); } else S.analysis = null;
+    render();
+  }
+  function renderTeamSelect() { $('#teamSel').innerHTML = S.teams.map(t => `<option value="${esc(t.id)}">${esc(t.name || t.id)}</option>`).join(''); }
+
+  // ---------- data ----------
+  function loadCSVText(text, name, opts) {
+    const parsed = C.parseCSV(text);
+    if (!parsed.headers.length || !parsed.rows.length) return toast('That file has no rows I can read.', true);
+    S.raw = parsed; S.fileName = name || 'incidents.csv'; S.mapping = C.detectMapping(parsed.headers);
+    if (!S.mapping.short) toast('Could not find a short description column — set it under Incidents → Column mapping.', true);
+    S.isDemo = !!(opts && opts.demo);
+    applyMapping();
+  }
+  function applyMapping() {
+    if (isPreview()) S.ledger = clone(S.baseLedger); // an unsaved preview is abandoned by the next load
+    S.norm = C.normalizeIncidents(S.raw.rows, S.mapping);
+    S.load = { demo: !!S.isDemo, confirmed: false }; S._pendingEvents = []; S._previewEvents = [];
+    prepare();
+    $('#incSig').innerHTML = '<option value="">All patterns</option>'; $('#offCat').innerHTML = '<option value="">All categories</option>'; runAnalysis(); render();
+  }
+  /* Dedupe by incident number, keep only the selected team's groups (demo data is kept whole), and decide whether
+   * the load needs a look before anything is saved. Ownership comes from every team's groups, not from who loaded it. */
+  function prepare() {
+    const p = C.prepareLoad(S.norm, S.team, S.teams, { scope: !S.load.demo });
+    S.allIncidents = p.all; S.incidents = p.incidents; S.load.info = p.info; S.load.check = p.check;
+  }
+  /* In preview nothing is written: the ledger is a scratch copy, pushes and syncs wait, events are held. Demo data is always a preview. */
+  function isPreview() { return !!(S.load && !S.load.confirmed && (S.load.demo || (S.load.check && S.load.check.preview))); }
+  function clone(o) { return JSON.parse(JSON.stringify(o)); }
+  function adoptLedger(l) { S.ledger = l; S.baseLedger = clone(l); }
+  async function readSavedLedger(id) { return S.mode === 'connected' ? api('GET', '/api/ledger/' + id) : (safeJSON(localStorage.getItem('ta:ledger:' + id), null) || C.newLedger(id)); }
+  function runAnalysis() {
+    S.analysis = C.analyze(S.incidents, S.team, S.catalog);
+    S.analysis.clusters.filter(c => c.flags.toil).forEach(c => C.registerOffender(S.ledger, c, { auto: true }));
+    const events = C.advanceLedger(S.ledger, S.analysis, S.incidents);
+    if (isPreview()) S._pendingEvents = events; else announce(events);
+    saveLedger();
+    if (S.mode === 'connected' && !isPreview()) api('PUT', '/api/summary/' + S.team.id, execSummary()).catch(() => {});
+  }
+  function announce(events) { if (events && events.length) toast(events.map(e => `${e.offender.name}: ${C.STATE_LABEL[e.from]} → ${C.STATE_LABEL[e.to]}`).join(' · ')); }
+  function execSummary() { const a = S.analysis; return { kpis: a.kpis, ledger: C.ledgerSummary(S.ledger, S.team), byCategory: a.byCategory, weeks: a.weeks.slice(-12), weeklyTotal: a.weeklyTotal.slice(-12), weeklyToil: a.weeklyToil.slice(-12), top: a.clusters.filter(c => c.flags.toil).slice(0, 10).map(c => ({ id: c.id, name: c.name, category: c.category, count: c.count, perMonth: +c.perMonth.toFixed(2), score: c.score, disposition: c.disposition, hoursPerMonth: c.savings.hoursPerMonth })), source: S.fileName }; }
+  const saveTimers = {};
+  function saveLedger() {
+    if (isPreview()) return;
+    S.ledger.updatedAt = new Date().toISOString();
+    S.baseLedger = clone(S.ledger);
+    const id = S.team.id, body = S.baseLedger;
+    if (S.mode === 'connected') { clearTimeout(saveTimers[id]); saveTimers[id] = setTimeout(() => api('PUT', '/api/ledger/' + id, body).catch(e => toast('Ledger not saved: ' + e.message, true)), 400); }
+    else localStorage.setItem('ta:ledger:' + id, JSON.stringify(body));
+  }
+  function saveTeam(team) {
+    S.team = team; const i = S.teams.findIndex(t => t.id === team.id); if (i >= 0) S.teams[i] = team; else S.teams.push(team);
+    if (S.mode === 'connected') return api('PUT', '/api/team/' + team.id, team);
+    localStorage.setItem('ta:team:' + team.id, JSON.stringify(team)); return Promise.resolve({ ok: true });
+  }
+  function cluster(id) { return S.analysis && S.analysis.clusters.find(c => c.id === id); }
+  function download(name, text, type) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: type || 'text/plain' })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
+  function copy(text) { navigator.clipboard.writeText(text).then(() => toast('Copied'), () => toast('Copy blocked by the browser — select and copy manually', true)); }
+
+  // ---------- rendering ----------
+  function render() {
+    $$('#nav button').forEach(b => b.classList.toggle('on', b.dataset.view === S.view));
+    $$('.view').forEach(v => v.classList.toggle('hide', v.id !== 'view-' + S.view));
+    const a = S.analysis;
+    const st = loadStatus(); $('#dataStatus').textContent = st; $('#dataStatus').title = st;
+    renderLoadBanner();
+    $('#nOffenders').textContent = a ? a.kpis.toilClusters : ''; $('#nIncidents').textContent = a ? fmt(a.kpis.incidents, 0) : '';
+    $('#nLedger').textContent = Object.keys(S.ledger.offenders).length || ''; $('#nSigs').textContent = S.catalog.length;
+    ({ exec: renderExec, offenders: renderOffenders, incidents: renderIncidents, ledger: renderLedger, signatures: renderSignatures, report: renderReport, settings: renderSettings })[S.view]();
+  }
+
+  // Executive
+  function renderExec() {
+    const a = S.analysis, ls = C.ledgerSummary(S.ledger, S.team);
+    $('#execTitle').textContent = S.team.name || S.team.id;
+    if (!a && !Object.keys(S.ledger.offenders).length) { $('#execSub').textContent = ''; $('#execBody').innerHTML = `<div class="empty"><p>Load a ServiceNow incident export to see where the hours go.</p><button class="btn primary" onclick="document.getElementById('btnLoad').click()">Load CSV</button><button class="btn" onclick="document.getElementById('btnDemo').click()">Try demo data</button></div>`; return; }
+    const k = a ? a.kpis : null;
+    $('#execSub').textContent = a ? `${fmt(k.incidents, 0)} incidents over ${k.days} days · ${k.toilPct}% toil · generated ${a.generatedAt.slice(0, 16).replace('T', ' ')}` : 'Ledger only — load data to refresh the numbers';
+    const st = ls.byState, hrs = st => Object.values(S.ledger.offenders).filter(o => o.state === st && o.baseline).reduce((s, o) => s + o.baseline.perMonth * (o.baseline.techPerInc + o.baseline.bizPerInc) * (C.DISPOSITIONS[o.disposition] || 0), 0);
+    const chain = `<div class="killchain">
+      ${['detected', 'ticketed', 'fixed', 'verified'].map(s => `<div class="stage ${s}"><div class="n">${st[s] || 0}</div><div class="l">${C.STATE_LABEL[s]}</div><div class="s">${s === 'verified' ? fmt(ls.hoursSavedVerifiedPerMonth) + ' h/mo saved' : fmt(hrs(s)) + ' h/mo in play'}</div></div>`).join('')}
+      <div class="stage side"><div><span class="n">${st.regressed || 0}</span><span class="l">regressed</span></div><div><span class="n">${st.accepted || 0}</span><span class="l">accepted</span></div></div>
+    </div>`;
+    const kpis = k ? `<div class="kpis">
+      <div class="kpi"><div class="v">${fmt(k.incidents, 0)}</div><div class="l">Incidents analyzed</div><div class="sub">${k.days} days</div></div>
+      <div class="kpi"><div class="v">${fmt(k.toilIncidents, 0)}<em>${k.toilPct}%</em></div><div class="l">Toil candidates</div><div class="sub">${k.toilClusters} patterns</div></div>
+      <div class="kpi"><div class="v">${fmt(k.technicalHours, 0)}<em>h</em></div><div class="l">Technical hours</div><div class="sub">${money(k.technicalUsd)} ops effort</div></div>
+      <div class="kpi"><div class="v">${fmt(k.businessHours, 0)}<em>h</em></div><div class="l">Business hours</div><div class="sub">${money(k.businessUsd)} waiting / manual</div></div>
+      <div class="kpi"><div class="v">${fmt(k.projectedSavedHoursPerMonth, 0)}<em>h/mo</em></div><div class="l">Projected savings</div><div class="sub">${money(k.projectedSavedUsdPerYear)}/yr if all candidates land</div></div>
+      <div class="kpi"><div class="v">${fmt(ls.hoursSavedVerifiedPerMonth, 0)}<em>h/mo</em></div><div class="l">Verified savings</div><div class="sub">${money(ls.usdSavedVerifiedPerYear)}/yr, proven by data</div></div>
+      <div class="kpi"><div class="v">${money(ls.aiCostUsd)}</div><div class="l">AI spend this month</div><div class="sub">${ls.aiRuns} analyses · ${money(ls.aiLifetimeCostUsd)} lifetime</div></div>
+    </div>` : '';
+    const proj = k ? k.projectedSavedHoursPerMonth : 0, max = Math.max(proj, ls.hoursSavedProjectedPerMonth, ls.hoursSavedVerifiedPerMonth, 1);
+    const ladder = `<div class="panel"><h3>Savings ladder (hours per month)</h3><div class="ladder">
+      <div>Projected</div><div class="bar"><i class="tint" style="width:${100 * proj / max}%"></i></div><div class="r num">${fmt(proj, 0)} h</div>
+      <div>Committed</div><div class="bar"><i style="width:${100 * ls.hoursSavedProjectedPerMonth / max}%"></i></div><div class="r num">${fmt(ls.hoursSavedProjectedPerMonth, 0)} h</div>
+      <div>Verified</div><div class="bar"><i class="lime" style="width:${100 * ls.hoursSavedVerifiedPerMonth / max}%"></i></div><div class="r num">${fmt(ls.hoursSavedVerifiedPerMonth, 0)} h</div>
+    </div><div class="hint">Projected = every toil candidate at its disposition factor. Committed = ticketed, fixed or verified. Verified = incidents actually stopped in the data.</div></div>`;
+    const weekly = a && a.weeks.length ? `<div class="panel"><h3>Weekly incidents</h3>${svgWeekly(a)}<div class="legend"><span><i style="background:var(--tint-3)"></i>All incidents</span><span><i style="background:var(--plum)"></i>Toil candidates</span></div></div>` : '';
+    const cands = a ? a.clusters.filter(c => c.flags.toil).slice().sort((x, y) => y.savings.hoursPerMonth - x.savings.hoursPerMonth) : [];
+    const n = Math.min(S.whatIf, cands.length), pick = cands.slice(0, n);
+    const wi = cands.length ? `<div class="panel whatif"><h3>What if we fix the top <span id="wiN">${n}</span>?</h3><input type="range" id="whatIf" min="1" max="${cands.length}" value="${n}"><div class="row between"><div><div class="big" id="wiH">${fmt(pick.reduce((s, c) => s + c.savings.hoursPerMonth, 0), 0)} h/mo</div><div class="muted small" id="wiU">${money(pick.reduce((s, c) => s + c.savings.usdPerYear, 0))} per year</div></div><div class="small muted" id="wiL" style="max-width:55%">${pick.map(c => esc(c.name)).join(' · ')}</div></div></div>` : '';
+    const top = cands.slice(0, 10);
+    const topT = top.length ? `<div class="panel"><h3>Top offenders</h3><table><thead><tr><th>Pattern</th><th>Category</th><th class="r">Count</th><th class="r">/mo</th><th>Disposition</th><th>State</th><th class="r">Saves h/mo</th></tr></thead><tbody>${top.map(c => { const o = S.ledger.offenders[c.id]; return `<tr class="click" data-id="${esc(c.id)}"><td class="name">${esc(c.name)}</td><td>${esc(c.category)}</td><td class="r num">${c.count}</td><td class="r num">${fmt(c.perMonth)}</td><td>${C.DISPOSITION_LABEL[c.disposition] || c.disposition}</td><td>${o ? stateTag(o.state) : ''}</td><td class="r num">${fmt(c.savings.hoursPerMonth)}</td></tr>`; }).join('')}</tbody></table></div>` : '';
+    const teams = S.mode === 'connected' && S.exec && S.exec.length > 1 ? `<div class="panel"><h3>All teams</h3><table><thead><tr><th>Team</th><th class="r">Incidents</th><th class="r">Toil</th><th class="r">Committed h/mo</th><th class="r">Verified h/mo</th><th class="r">AI spend</th><th>Updated</th></tr></thead><tbody>${S.exec.map(t => `<tr><td>${esc(t.team.name)}</td><td class="r num">${t.summary ? fmt(t.summary.kpis.incidents, 0) : '—'}</td><td class="r num">${t.summary ? t.summary.kpis.toilPct + '%' : '—'}</td><td class="r num">${fmt(t.ledger.hoursSavedProjectedPerMonth, 0)}</td><td class="r num">${fmt(t.ledger.hoursSavedVerifiedPerMonth, 0)}</td><td class="r num">$${fmt(t.ledger.aiCostUsd, 2)}</td><td class="small muted">${t.summary ? dt(t.summary.at) : '—'}</td></tr>`).join('')}</tbody></table></div>` : '';
+    const hoursTable = (title, map) => { const rows = Object.entries(map || {}).sort((x, y) => (y[1].technical + y[1].business) - (x[1].technical + x[1].business)).slice(0, 8); const max = Math.max.apply(null, rows.map(r => r[1].technical + r[1].business).concat([1])); return rows.length ? `<div class="panel"><h3>${title}</h3><div class="ladder" style="grid-template-columns:140px 1fr 130px">${rows.map(([k2, b]) => `<div class="name" title="${esc(k2)}">${esc(k2)}</div><div class="bar"><i style="width:${100 * b.technical / max}%;display:inline-block"></i><i class="tint" style="width:${100 * b.business / max}%;display:inline-block"></i></div><div class="r num small">${fmt(b.technical, 0)} + ${fmt(b.business, 0)} h</div>`).join('')}</div><div class="legend"><span><i style="background:var(--plum)"></i>Technical</span><span><i style="background:var(--tint-3)"></i>Business</span></div></div>` : ''; };
+    const hasComp = a && Object.keys(a.byComponent || {}).some(k2 => k2 !== 'unassigned');
+    const where = a ? `<div class="cols">${hoursTable('Where the hours go, by category', a.byCategory)}${hasComp ? hoursTable('By component', a.byComponent) : ''}</div>` : '';
+    $('#execBody').innerHTML = chain + kpis + `<div class="cols">${ladder}${weekly || wi}</div>` + (weekly && wi ? `<div class="cols">${wi}${topT}</div>` : topT) + where + teams;
+    const r = $('#whatIf'); if (r) r.oninput = e => { S.whatIf = +e.target.value; const p = cands.slice(0, S.whatIf); $('#wiN').textContent = S.whatIf; $('#wiH').textContent = fmt(p.reduce((s, c) => s + c.savings.hoursPerMonth, 0), 0) + ' h/mo'; $('#wiU').textContent = money(p.reduce((s, c) => s + c.savings.usdPerYear, 0)) + ' per year'; $('#wiL').textContent = p.map(c => c.name).join(' · '); };
+    $$('#execBody tr.click').forEach(tr => tr.onclick = () => openOffender(tr.dataset.id));
+  }
+  function svgWeekly(a) {
+    const W = 520, H = 130, pad = 22, n = a.weeks.length, max = Math.max.apply(null, a.weeklyTotal.concat([1]));
+    const bw = Math.max(2, (W - pad * 2) / n - 2);
+    let s = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="weekly incidents">`;
+    a.weeks.forEach((w, i) => { const x = pad + i * ((W - pad * 2) / n); const ht = (H - 30) * a.weeklyTotal[i] / max, hl = (H - 30) * a.weeklyToil[i] / max; s += `<rect x="${x}" y="${H - 20 - ht}" width="${bw}" height="${ht}" fill="var(--tint-3)"/><rect x="${x}" y="${H - 20 - hl}" width="${bw}" height="${hl}" fill="var(--plum)"><title>${w}: ${a.weeklyTotal[i]} incidents, ${a.weeklyToil[i]} toil</title></rect>`; if (i === 0 || i === n - 1 || i % Math.ceil(n / 6) === 0) s += `<text x="${x}" y="${H - 6}" font-size="10" fill="var(--ink-2)">${w.slice(5)}</text>`; });
+    s += `<text x="${pad}" y="12" font-size="10" fill="var(--ink-2)">${max}/wk</text></svg>`;
+    return s;
+  }
+  function spark(vals, w, h) { w = w || 90; h = h || 22; if (!vals || !vals.length) return ''; const max = Math.max.apply(null, vals.concat([1])); const pts = vals.map((v, i) => `${(i / Math.max(1, vals.length - 1) * (w - 2) + 1).toFixed(1)},${(h - 1 - (h - 2) * v / max).toFixed(1)}`).join(' '); return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline points="${pts}" fill="none" stroke="var(--plum)" stroke-width="1.5"/></svg>`; }
+  function stateTag(st) { return `<span class="tag st-${st}">${C.STATE_LABEL[st] || st}</span>`; }
+
+  // Offenders
+  function renderOffenders() {
+    const a = S.analysis; const t = $('#offTable');
+    if (!a) { t.innerHTML = `<tbody><tr><td class="empty">Load data to see patterns.</td></tr></tbody>`; return; }
+    const catSel = $('#offCat'); if (catSel.options.length <= 1) catSel.innerHTML = '<option value="">All categories</option>' + Object.keys(a.byCategory).sort().map(c => `<option>${esc(c)}</option>`).join('');
+    const stSel = $('#offState'); if (stSel.options.length <= 2) stSel.innerHTML += C.STATES.map(s => `<option value="${s}">${C.STATE_LABEL[s]}</option>`).join('');
+    const q = $('#offSearch').value.toLowerCase(), cat = catSel.value, stv = stSel.value, toilOnly = $('#offToil').checked, unk = $('#offUnknown').checked;
+    let rows = a.clusters.filter(c => (!toilOnly || c.flags.toil) && (!unk || !c.known) && (!cat || c.category === cat) && (!q || c.name.toLowerCase().includes(q) || c.masked.includes(q)) && (!stv || (stv === 'untracked' ? !S.ledger.offenders[c.id] : (S.ledger.offenders[c.id] || {}).state === stv)));
+    const [key, dir] = S.sort.off;
+    const val = c => ({ rank: a.clusters.indexOf(c) * -1, name: c.name, category: c.category, count: c.count, perMonth: c.perMonth, score: c.score, saves: c.savings.hoursPerMonth, state: (S.ledger.offenders[c.id] || {}).state || '' })[key];
+    rows.sort((x, y) => { const p = val(x), q2 = val(y); return (typeof p === 'number' ? p - q2 : String(p).localeCompare(String(q2))) * (key === 'rank' ? -1 : 1) * dir; });
+    S._offRows = rows;
+    const th = (k, l, cls) => `<th class="${cls || ''} ${key === k ? 'sorted' : ''}" data-k="${k}">${l}${key === k ? (dir > 0 ? ' ↑' : ' ↓') : ''}</th>`;
+    t.innerHTML = `<thead><tr>${th('rank', '#')}${th('name', 'Pattern')}${th('category', 'Category')}${th('count', 'Count', 'r')}${th('perMonth', '/mo', 'r')}<th>Trend</th>${th('score', 'Score', 'r')}<th>Disposition</th>${th('state', 'State')}${th('saves', 'Saves h/mo', 'r')}</tr></thead><tbody>${rows.map(c => { const o = S.ledger.offenders[c.id]; return `<tr class="click ${S.selected === c.id ? 'sel' : ''}" data-id="${esc(c.id)}"><td class="num muted">${a.clusters.indexOf(c) + 1}</td><td class="name" title="${esc(c.masked)}">${esc(c.name)} ${c.known ? '' : '<span class="tag unknown">unknown</span>'}</td><td>${esc(c.category)}</td><td class="r num">${c.count}</td><td class="r num">${fmt(c.perMonth)}</td><td>${spark(c.weekly.slice(-12))}</td><td class="r num"><span class="scorebar"><i style="width:${c.score}%"></i></span> ${c.score}</td><td>${C.DISPOSITION_LABEL[c.disposition] || c.disposition}</td><td>${o ? stateTag(o.state) : '<span class="muted small">—</span>'}</td><td class="r num">${fmt(c.savings.hoursPerMonth)}</td></tr>`; }).join('') || '<tr><td colspan="10" class="muted">Nothing matches these filters.</td></tr>'}</tbody>`;
+    $$('#offTable th[data-k]').forEach(h => h.onclick = () => { const k = h.dataset.k; S.sort.off = [k, S.sort.off[0] === k ? -S.sort.off[1] : 1]; renderOffenders(); });
+    $$('#offTable tr.click').forEach(tr => tr.onclick = () => openOffender(tr.dataset.id));
+  }
+
+  // Incidents
+  function renderIncidents() {
+    const t = $('#incTable'); const a = S.analysis;
+    if (!S.raw) { t.innerHTML = `<tbody><tr><td class="empty">Load data first.</td></tr></tbody>`; $('#mapping').innerHTML = ''; $('#incMeta').textContent = ''; return; }
+    $('#mapping').innerHTML = C.FIELDS.map(f => `<div><label class="f">${C.FIELD_LABEL[f]}</label><select data-f="${f}"><option value="">—</option>${S.raw.headers.map(h => `<option ${S.mapping[f] === h ? 'selected' : ''}>${esc(h)}</option>`).join('')}</select></div>`).join('');
+    const sigSel = $('#incSig'); if (a && sigSel.options.length <= 1) sigSel.innerHTML = '<option value="">All patterns</option>' + a.clusters.map(c => `<option value="${esc(c.id)}">${esc(c.name.slice(0, 70))} (${c.count})</option>`).join('');
+    const q = $('#incSearch').value.toLowerCase(), sid = sigSel.value;
+    const rows = S.incidents.filter(i => (!sid || i._sig === sid) && (!q || (i.short + ' ' + i.description + ' ' + i.number + ' ' + i.ci + ' ' + i.group).toLowerCase().includes(q)));
+    S._incRows = rows;
+    $('#incMeta').textContent = `${fmt(rows.length, 0)} of ${fmt(S.incidents.length, 0)} shown${rows.length > 500 ? ' (first 500 rendered)' : ''}`;
+    t.innerHTML = `<thead><tr><th>Number</th><th>Opened</th><th>Short description</th><th>Pattern</th><th>CI</th><th>Group</th><th class="r">Tech h</th><th class="r">Biz h</th></tr></thead><tbody>${rows.slice(0, 500).map(i => `<tr class="click" data-id="${esc(i._sig || '')}"><td class="mono">${esc(i.number)}</td><td class="small">${i.opened ? esc(i.opened.toISOString().slice(0, 16).replace('T', ' ')) : ''}</td><td class="name" title="${esc(i.description)}">${esc(i.short)}</td><td class="small muted">${esc((cluster(i._sig) || {}).name || '').slice(0, 50)}</td><td class="small">${esc(i.ci)}</td><td class="small">${esc(i.group)}</td><td class="r num">${fmt(i._tech, 2)}</td><td class="r num">${fmt(i._biz, 1)}</td></tr>`).join('')}</tbody>`;
+    $$('#incTable tr.click').forEach(tr => tr.onclick = () => tr.dataset.id && openOffender(tr.dataset.id));
+  }
+
+  // Ledger
+  function renderLedger() {
+    const t = $('#ledgerTable'); const os = Object.values(S.ledger.offenders);
+    if (!os.length) { t.innerHTML = `<tbody><tr><td class="empty">Nothing tracked yet. Toil candidates register here automatically when data is analyzed.</td></tr></tbody>`; return; }
+    const [key, dir] = S.sort.led;
+    const savesOf = o => o.baseline ? o.baseline.perMonth * (o.baseline.techPerInc + o.baseline.bizPerInc) * (C.DISPOSITIONS[o.disposition] || 0) : 0;
+    const val = o => ({ state: C.STATES.indexOf(o.state), name: o.name, disposition: o.disposition, jira: o.jira, baseline: o.baseline ? o.baseline.perMonth : 0, latest: o.latest ? o.latest.perMonth : 0, saves: savesOf(o), updated: o.history[o.history.length - 1].at })[key];
+    os.sort((x, y) => { const p = val(x), q = val(y); return (typeof p === 'number' ? p - q : String(p).localeCompare(String(q))) * dir; });
+    const th = (k, l, cls) => `<th class="${cls || ''} ${key === k ? 'sorted' : ''}" data-k="${k}">${l}${key === k ? (dir > 0 ? ' ↑' : ' ↓') : ''}</th>`;
+    t.innerHTML = `<thead><tr>${th('state', 'State')}${th('name', 'Pattern')}${th('disposition', 'Disposition')}${th('jira', 'Jira')}<th>Owner</th>${th('baseline', 'Baseline /mo', 'r')}${th('latest', 'Latest /mo', 'r')}${th('saves', 'Saves h/mo', 'r')}${th('updated', 'Updated')}</tr></thead><tbody>${os.map(o => `<tr class="click" data-id="${esc(o.id)}"><td>${stateTag(o.state)}</td><td class="name">${esc(o.name)}</td><td>${C.DISPOSITION_LABEL[o.disposition] || o.disposition}</td><td class="mono">${esc(o.jira)}</td><td class="small">${esc(o.owner)}</td><td class="r num">${o.baseline ? fmt(o.baseline.perMonth) : '—'}</td><td class="r num">${o.latest ? fmt(o.latest.perMonth) : '—'}</td><td class="r num">${fmt(savesOf(o))}</td><td class="small muted">${dt(o.history[o.history.length - 1].at)}</td></tr>`).join('')}</tbody>`;
+    $$('#ledgerTable th[data-k]').forEach(h => h.onclick = () => { const k = h.dataset.k; S.sort.led = [k, S.sort.led[0] === k ? -S.sort.led[1] : 1]; renderLedger(); });
+    $$('#ledgerTable tr.click').forEach(tr => tr.onclick = () => openOffender(tr.dataset.id));
+  }
+
+  // Signatures
+  function renderSignatures() {
+    const a = S.analysis; const hits = id => a ? ((a.clusters.find(c => c.id === id) || {}).count || 0) : '—';
+    $('#sigTable').innerHTML = `<thead><tr><th>Id</th><th>Name</th><th>Category</th><th class="r">Hits in data</th><th>Disposition</th><th>Regex</th><th>Owner</th></tr></thead><tbody>${S.catalog.map(s => `<tr><td class="mono">${esc(s.id)}</td><td>${esc(s.name)}</td><td>${esc(s.category)}</td><td class="r num">${hits(s.id)}</td><td>${C.DISPOSITION_LABEL[s.disposition] || esc(s.disposition || '')}</td><td class="mono" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(s.match.regex)}">${esc(s.match.regex)}</td><td class="small">${esc(s.owner || '')}</td></tr>`).join('')}</tbody>`;
+    $('#proposedList').innerHTML = S.proposed.length ? `<table><thead><tr><th>Id</th><th>Name</th><th>From</th><th>Regex</th><th>Evidence</th></tr></thead><tbody>${S.proposed.map(s => `<tr><td class="mono">${esc(s.id)}</td><td>${esc(s.name)}</td><td>${esc(s.proposedFrom || '')}</td><td class="mono">${esc(s.match.regex)}</td><td class="small">${s.evidence ? `${s.evidence.count} incidents, ${s.evidence.perMonth}/mo` : ''}</td></tr>`).join('')}</tbody></table>` : (S.mode === 'connected' ? 'None pending. Propose one from an unknown offender.' : 'Proposals are written to the repo in Connected mode; in Lite mode they download as JSON to attach to an MR.');
+  }
+
+  // Report
+  function renderReport() {
+    if (!S.analysis) { $('#reportMd').textContent = 'Load data to generate a report.'; $('#reportMeta').textContent = ''; $('#metricsPreview').textContent = ''; return; }
+    const md = C.renderReport(S.analysis, S.ledger, S.team); S._report = md;
+    $('#reportMd').textContent = md; $('#reportMeta').textContent = `${S.team.name} · ${S.fileName} · ${C.weekKey(new Date())}`;
+    S._lines = C.metricsLines(S.analysis, S.ledger, S.team); $('#metricsPreview').textContent = S._lines.join('\n');
+  }
+
+  // Settings
+  function renderSettings() {
+    const hm = S.team.hoursModel || {};
+    $('#setRateT').value = (hm.rates || {}).technical || 85; $('#setRateB').value = (hm.rates || {}).business || 60;
+    $('#setThreshold').value = (S.team.toil || {}).threshold || 60; $('#setRepMin').value = (S.team.toil || {}).repetitiveMin || 5;
+    $('#teamJson').value = JSON.stringify(S.team, null, 2); $('#teamMsg').textContent = '';
+    $('#teamSrc').textContent = S.mode === 'connected' ? `teams/${S.team.id}/team.json — saved to the repo, share by merge request.` : 'Edits stay in this browser. Download and add to teams/<id>/team.json to share.';
+    $('#obIntro').textContent = S.mode === 'connected' ? 'Pick groups and CIs from a loaded export, preview the team\'s top offenders, then open a merge request that adds the team.' : 'Pick groups and CIs from a loaded export, preview the team\'s top offenders, then download team.json to add through a merge request.';
+    const st = S.status;
+    $('#runInfo').innerHTML = S.mode === 'connected' ? `<div>Server ${esc(st.root)} · Node ${esc(st.node)} · branch ${esc((st.git || {}).branch || '?')}</div><div>Claude CLI: ${st.claude.bin ? esc(st.claude.bin) : '<b>not found</b> (set CLAUDE_BIN)'}</div><div>ServiceNow: ${st.env.servicenow ? 'configured' : 'not configured (SN_INSTANCE + SN_TOKEN or SN_USER/SN_PASS in .env)'}</div><div>Dynatrace: ${st.env.dynatrace ? 'configured' : 'not configured (DT_URL + DT_TOKEN in .env)'}</div><div>GitLab MRs: ${st.env.gitlabToken ? 'API token' : st.glab ? 'glab CLI' : 'link only (set GITLAB_TOKEN)'}</div><div>Jira sync: ${st.env.jira ? 'configured' : 'not configured (JIRA_URL + JIRA_TOKEN in .env)'}</div>` : `<div>Lite mode: opened as a file. Claude, ServiceNow, Dynatrace and git actions need <span class="mono">npm start</span> in the repo clone.</div><div>Catalog: ${S.catalog.length} signatures embedded at build time.</div>`;
+  }
+
+  // ---------- Drawer ----------
+  function openOffender(id) {
+    const c = cluster(id); const o = S.ledger.offenders[id];
+    if (!c && !o) return;
+    S.selected = id;
+    const name = c ? c.name : o.name, cat = c ? c.category : o.category, disp = (o && o.disposition) || (c && c.disposition);
+    const parts = c ? Object.entries(c.scoreParts).map(([k, v]) => `<div>${k}</div><div class="bar"><i style="width:${v * 100}%"></i></div><div class="num">${Math.round(v * 100)}</div>`).join('') : '';
+    const sav = c ? C.projectSavings(c, S.team, disp) : null;
+    const next = { detected: ['ticketed', 'accepted'], ticketed: ['fixed', 'accepted', 'detected'], fixed: ['verified', 'regressed', 'ticketed'], verified: ['regressed'], regressed: ['ticketed', 'accepted'], accepted: ['detected'] }[o ? o.state : 'detected'] || [];
+    const ai = o && o.ai && o.ai.lastVerdict ? verdictHtml(o.ai.lastVerdict, o.ai) : '';
+    $('#drawerBody').innerHTML = `
+      <h2>${esc(name)}</h2>
+      <div class="row" style="margin:6px 0 10px"><span class="tag">${esc(cat)}</span>${c && c.component && c.component !== 'unassigned' ? `<span class="tag">${esc(c.component)}</span>` : ''}${c && !c.known ? '<span class="tag unknown">unknown pattern</span>' : c ? `<span class="tag">${esc(c.catalogId)}</span>` : ''}${o ? stateTag(o.state) : '<span class="tag">not tracked</span>'}${c ? `<span class="muted small">${c.count} incidents · ${fmt(c.perMonth)}/mo · first ${dt(c.firstSeen)} · last ${dt(c.lastSeen)}</span>` : ''}</div>
+      ${c ? `<div class="section"><div class="row between"><div><h3>Toil score ${c.score}</h3><div class="parts">${parts}</div></div><div>${spark(c.weekly.slice(-16), 160, 44)}<div class="small muted">last 16 weeks</div></div></div>${c.automationHint ? `<p class="small" style="margin-top:8px"><b>Catalog hint:</b> ${esc(c.automationHint)}</p>` : ''}</div>` : ''}
+      <div class="section"><h3>Disposition and value</h3>
+        <div class="row"><select id="dDisp">${Object.keys(C.DISPOSITIONS).map(d => `<option value="${d}" ${disp === d ? 'selected' : ''}>${C.DISPOSITION_LABEL[d]} (${Math.round(C.DISPOSITIONS[d] * 100)}%)</option>`).join('')}</select>
+        ${sav ? `<span class="num"><b>${fmt(sav.hoursPerMonth)}</b> h/mo · <b>${money(sav.usdPerYear)}</b>/yr</span>` : ''}</div>
+        ${c ? `<div class="small muted" style="margin-top:6px">Per incident: ${fmt(c.hours.techPerInc, 2)} h technical, ${fmt(c.hours.bizPerInc, 1)} h business${c.hours.elapsedSamples ? ` (business from opened→resolved on ${c.hours.elapsedSamples} incidents)` : ' (team defaults)'}</div>` : ''}
+        ${o && o.baseline ? `<div class="row small" style="margin-top:8px"><span class="muted">Savings measured against a baseline of ${fmt(o.baseline.perMonth)} a month, set ${dt(o.baseline.at)}${o.baseline.rebaselined ? ' by a rebaseline' : ''}</span>${c ? '<button class="btn sm" id="dRebase">Rebaseline</button>' : ''}</div>` : ''}
+      </div>
+      <div class="section"><h3>Kill chain</h3>
+        <div class="grid2"><div><label class="f">Jira</label><input type="text" id="dJira" value="${esc(o ? o.jira : '')}" placeholder="${esc(((S.team.jira || {}).projectKey || 'SRE') + '-123')}"></div><div><label class="f">Owner</label><input type="text" id="dOwner" value="${esc(o ? o.owner : '')}"></div></div>
+        <label class="f" style="margin-top:6px">Note for this move</label><input type="text" id="dNote" style="width:100%">
+        <div class="states">${o ? next.map(s => `<button class="btn sm" data-st="${s}">${s === 'accepted' ? 'Accept as is' : 'Mark ' + C.STATE_LABEL[s]}</button>`).join('') : '<button class="btn sm primary" data-st="track">Track this pattern</button>'}</div>
+        ${o && o.windows && o.windows.length ? `<div class="small muted" style="margin-top:8px">Since fix: ${o.windows.map(w => `${dt(w.start)} ${w.count}`).join(' · ')} (need 2 clean weeks)</div>` : ''}
+        ${o ? `<details style="margin-top:8px"><summary class="small">History (${o.history.length})</summary>${o.history.map(h => `<div class="small">${h.at.slice(0, 16).replace('T', ' ')} · ${h.action === 'rebaseline' ? 'Baseline changed' : (h.from ? C.STATE_LABEL[h.from] + ' → ' : '') + C.STATE_LABEL[h.state]} · ${esc(h.by)}${h.note ? ' · ' + esc(h.note) : ''}</div>`).join('')}</details>` : ''}
+      </div>
+      <div class="section"><h3>Analysis${o && o.ai && o.ai.runs ? ` <span class="muted small">(${o.ai.runs} run${o.ai.runs > 1 ? 's' : ''}, $${fmt(o.ai.costUsd, 2)})</span>` : ''}</h3>
+        <div class="row">${S.mode === 'connected' && c ? `<button class="btn primary sm" id="dAnalyze">Analyze with Claude</button><label class="check small"><input type="checkbox" id="dForce"> ignore cache</label>` : ''}${c ? `<button class="btn sm" id="dPacket">Copy packet</button>` : ''}<button class="btn sm" id="dPaste">Paste verdict</button></div>
+        <div id="dLive" class="live ${S._live[id] ? '' : 'hide'}" style="margin-top:8px">${S._live[id] || ''}</div>
+        <div id="dVerdict" style="margin-top:8px">${ai}</div>
+      </div>
+      ${c ? `<div class="section"><h3>Samples</h3><label class="check small"><input type="checkbox" id="dMasked"> show masked</label>${c.samples.map(s => `<div class="sample"><span class="mono">${esc(s.number)}</span> <span class="muted small">${dt(s.opened)}${s.ci ? ' · ' + esc(s.ci) : ''}</span><div class="raw">${esc(s.short)}</div><div class="m hide">${esc(s.masked)}</div>${s.notes ? `<div class="small muted">↳ ${esc(s.notes)}</div>` : ''}</div>`).join('')}
+        <div class="small muted" style="margin-top:8px">Groups: ${Object.entries(c.groups).map(([g, n]) => `${esc(g)} (${n})`).join(', ') || '—'}<br>CIs: ${Object.entries(c.cis).slice(0, 6).map(([g, n]) => `${esc(g)} (${n})`).join(', ') || '—'}</div></div>
+      <div class="section"><div class="row"><button class="btn sm" id="dExport">Export ${c.count} incidents</button>${!c.known ? `<button class="btn sm lime" id="dPropose">Propose signature</button>` : ''}</div></div>` : ''}`;
+    $('#drawer').classList.add('open');
+    // wiring
+    if ($('#dRebase')) $('#dRebase').onclick = () => rebaselineModal(id);
+    $('#dDisp').onchange = e => { if (o) { o.disposition = e.target.value; saveLedger(); } if (c) { c.disposition = e.target.value; c.savings = C.projectSavings(c, S.team, c.disposition); } openOffender(id); render(); };
+    $$('#drawerBody [data-st]').forEach(b => b.onclick = () => {
+      const st = b.dataset.st, jira = $('#dJira').value.trim(), owner = $('#dOwner').value.trim(), note = $('#dNote').value.trim();
+      if (st === 'track') { C.registerOffender(S.ledger, c, { by: 'ui', note: note || 'tracked manually' }); }
+      else { if (st === 'ticketed' && !jira && !confirm('No Jira key entered. Mark Ticketed anyway?')) return; const ev = C.transition(S.ledger, id, st, { jira, owner, note, by: 'ui' }); queueBizevent(ev); }
+      saveLedger(); openOffender(id); render(); toast(st === 'track' ? 'Tracking' : 'Marked ' + C.STATE_LABEL[st]);
+    });
+    const jiraEl = $('#dJira'), ownerEl = $('#dOwner'); [jiraEl, ownerEl].forEach(el => el.onchange = () => { if (o) { o.jira = jiraEl.value.trim(); o.owner = ownerEl.value.trim(); saveLedger(); render(); } });
+    if ($('#dMasked')) $('#dMasked').onchange = e => $$('#drawerBody .sample').forEach(s => { s.querySelector('.raw').classList.toggle('hide', e.target.checked); s.querySelector('.m').classList.toggle('hide', !e.target.checked); });
+    if ($('#dPacket')) $('#dPacket').onclick = () => copy(JSON.stringify(C.buildPacket(c, S.team, S.analysis), null, 2));
+    if ($('#dExport')) $('#dExport').onclick = () => download(`${S.team.id}-${id}.csv`, C.toCSV(c.incidents.map(i => S.incidents[i].raw), S.raw.headers), 'text/csv');
+    if ($('#dPropose')) $('#dPropose').onclick = () => proposeModal(c);
+    if ($('#dAnalyze')) $('#dAnalyze').onclick = () => analyzeWithClaude(c, $('#dForce').checked);
+    $('#dPaste').onclick = () => {
+      const root = $('#modalRoot');
+      root.innerHTML = `<div class="overlay"><div class="modal"><h2>Paste a verdict</h2><p class="muted small">Run <span class="mono">/toil-analyzer:offender</span> in Claude Code with the copied packet and paste its JSON here. Fences are fine.</p><textarea id="pvText" class="mono" style="min-height:220px" placeholder='{"disposition":"automate", ...}'></textarea><div class="row" style="margin-top:10px"><button class="btn primary" id="pvApply">Apply verdict</button><button class="btn" id="pvCancel">Cancel</button><span id="pvMsg" class="small muted"></span></div></div></div>`;
+      $('#pvCancel').onclick = () => root.innerHTML = '';
+      $('#pvApply').onclick = () => { const v = C.parseVerdict($('#pvText').value); if (!v || !v.disposition) { $('#pvMsg').textContent = 'That is not a verdict JSON (needs at least "disposition").'; return; } root.innerHTML = ''; applyVerdict(id, v, { usd: 0, turns: 0, model: 'manual' }); toast('Verdict applied'); };
+      $('#pvText').focus();
+    };
+    if (o && o.ai && o.ai.lastVerdict) wireVerdict(id, o.ai.lastVerdict);
+    $('#drawerBody').scrollTop = 0;
+  }
+  function verdictHtml(v, ai) {
+    return `<div class="verdict"><div class="row between"><b>${C.DISPOSITION_LABEL[v.disposition] || esc(v.disposition)} · ${Math.round((v.confidence || 0) * 100)}% confidence</b><span class="small muted">${ai && ai.at ? dt(ai.at) : ''}${ai && ai.model ? ' · ' + esc(ai.model) : ''}</span></div>
+      <dl><dt>Root cause</dt><dd>${esc(v.root_cause)}</dd><dt>Fix (${esc(v.fix_type)}${v.hours_est ? ', ~' + fmt(v.hours_est, 0) + ' h' : ''})</dt><dd>${esc(v.fix_summary)}</dd>${v.evidence && v.evidence.length ? `<dt>Evidence</dt><dd>${v.evidence.map(e => '• ' + esc(e)).join('<br>')}</dd>` : ''}${v.risks && v.risks.length ? `<dt>Risks</dt><dd>${v.risks.map(e => '• ' + esc(e)).join('<br>')}</dd>` : ''}</dl>
+      <div class="row" style="margin-top:8px"><button class="btn sm" id="vApply">Use disposition</button><button class="btn sm" id="vJira">Copy Jira text</button></div></div>`;
+  }
+  function applyVerdict(id, v, cost) {
+    const o = S.ledger.offenders[id] || (cluster(id) && C.registerOffender(S.ledger, cluster(id), { by: 'ui', note: 'tracked after analysis' }));
+    if (!o) return;
+    o.ai = o.ai || { runs: 0, costUsd: 0 }; o.ai.lastVerdict = v; o.ai.at = new Date().toISOString(); o.ai.model = cost.model;
+    if (S.mode === 'lite' || isPreview()) { o.ai.runs++; o.ai.costUsd = +(o.ai.costUsd + (cost.usd || 0)).toFixed(4); }
+    saveLedger(); openOffender(id);
+  }
+  function wireVerdict(id, v) {
+    const c = cluster(id), o = S.ledger.offenders[id];
+    if ($('#vApply')) $('#vApply').onclick = () => { if (o) o.disposition = v.disposition; if (c) { c.disposition = v.disposition; c.savings = C.projectSavings(c, S.team, v.disposition); } saveLedger(); openOffender(id); render(); toast('Disposition set to ' + C.DISPOSITION_LABEL[v.disposition]); };
+    if ($('#vJira')) $('#vJira').onclick = () => copy(`${v.jira_title || o.name}\n\n${v.jira_description || v.fix_summary}\n\nRoot cause: ${v.root_cause}\nDisposition: ${v.disposition} (${Math.round((v.confidence || 0) * 100)}%)\nPattern: ${o ? o.name : id}${c ? `\nVolume: ${c.count} incidents, ${fmt(c.perMonth)}/month, saves ~${fmt(c.savings.hoursPerMonth)} h/month` : ''}\nSource: toil-analyzer`);
+  }
+  function liveAppend(id, html) { S._live[id] = (S._live[id] || '') + html; const el = $('#dLive'); if (el && S.selected === id) { el.classList.remove('hide'); el.innerHTML = S._live[id]; el.scrollTop = el.scrollHeight; } }
+  async function analyzeWithClaude(c, force) {
+    S._live[c.id] = ''; liveAppend(c.id, '<span class="t">starting claude…</span>\n'); $('#dAnalyze').disabled = true;
+    if (!S.ledger.offenders[c.id]) { C.registerOffender(S.ledger, c, { by: 'ui', note: 'tracked for analysis' }); saveLedger(); }
+    const packet = C.buildPacket(c, S.team, S.analysis);
+    try {
+      const res = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ team: S.team.id, packet, force }) });
+      const reader = res.body.getReader(), dec = new TextDecoder(); let buf = '', final = null;
+      while (true) {
+        const { value, done } = await reader.read(); if (done) break;
+        buf += dec.decode(value, { stream: true }); let i;
+        while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (!line) continue; const m = safeJSON(line, null); if (!m) continue;
+          if (m.type === 'event') liveAppend(c.id, liveLine(m.event)); else if (m.type === 'result') final = m; else if (m.type === 'error') liveAppend(c.id, `<span class="t">error:</span> ${esc(m.message)}\n`); else if (m.type === 'start') liveAppend(c.id, `<span class="t">model ${esc(m.model)}</span>\n`); }
+      }
+      if (final) {
+        liveAppend(c.id, `<span class="t">${final.cached ? 'from cache' : `done · $${fmt(final.cost.usd, 3)} · ${final.cost.turns} turns · ${fmt(final.cost.durationMs / 1000, 0)}s`}</span>\n`);
+        { const disk = await api('GET', '/api/ledger/' + S.team.id); if (isPreview()) S.ledger.ai = disk.ai; else adoptLedger(disk); }
+        if (final.verdict) { applyVerdict(c.id, final.verdict, final.cost); toast('Analysis ready'); } else toast('Claude answered but not with a JSON verdict — see the live pane.', true);
+        if (!final.verdict && final.raw) liveAppend(c.id, esc(final.raw) + '\n');
+      }
+    } catch (e) { liveAppend(c.id, `<span class="t">failed:</span> ${esc(e.message)}\n`); toast(e.message, true); }
+    const b = $('#dAnalyze'); if (b) b.disabled = false; render();
+  }
+  function liveLine(ev) {
+    if (ev.type === 'assistant') return ev.content.map(c => c.type === 'text' ? esc(c.text) + '\n' : c.type === 'tool_use' ? `<span class="t">→ ${esc(c.name)}</span> ${esc(c.input)}\n` : '').join('');
+    if (ev.type === 'tool_result') return `<span class="t">← tool result</span>\n`;
+    if (ev.type === 'system') return `<span class="t">session ${esc(ev.subtype || '')}</span>\n`;
+    return '';
+  }
+
+  // ---------- Load checks: status line, preview banner, save or discard ----------
+  function loadStatus() {
+    const a = S.analysis; if (!a || !S.load) return 'No data loaded';
+    const i = S.load.info || {}, parts = [`${S.load.demo ? 'Demo data' : S.fileName} · ${fmt(a.kpis.incidents, 0)} incidents · ${dt(a.kpis.from)} to ${dt(a.kpis.to)}`];
+    if (S.load.demo) parts.push('not saved');
+    else {
+      if (i.excluded) parts.push(`${fmt(i.excluded, 0)} not this team's`);
+      if (i.duplicates) parts.push(`${fmt(i.duplicates, 0)} duplicates dropped`);
+      if (isPreview()) parts.push('not saved yet');
+    }
+    return parts.join(' · ');
+  }
+  function renderLoadBanner() {
+    const el = $('#loadBanner'); if (!el) return;
+    const show = isPreview() && !S.load.demo;
+    el.classList.toggle('hide', !show);
+    if (!show) { el.innerHTML = ''; return; }
+    const i = S.load.info, who = esc(S.team.name || S.team.id), none = i.scoped && i.kept === 0;
+    const onboard = S.load.check.reasons.some(r => r.code === 'unscoped') || (i.unowned > 0 && i.unowned >= 0.25 * i.unique);
+    el.innerHTML = `<h3>Nothing from this load is saved yet</h3>${S.load.check.reasons.map(r => `<p class="small">${esc(r.text)}</p>`).join('')}
+      <p class="small muted">${none ? `None of these incidents belong to ${who}. Pick the owning team from the team list, or onboard a new team.` : `Check the numbers, then save the kept incidents to ${who}'s ledger or discard the load.`}</p>
+      <div class="row">${none ? '' : '<button class="btn primary" id="lbSave">Save to ledger</button>'}<button class="btn" id="lbDiscard">Discard load</button>${onboard ? '<button class="btn" id="lbOnboard">Onboard a team from this data</button>' : ''}</div>`;
+    if ($('#lbSave')) $('#lbSave').onclick = confirmLoad;
+    $('#lbDiscard').onclick = discardLoad;
+    if ($('#lbOnboard')) $('#lbOnboard').onclick = () => onboardModal();
+  }
+  function confirmLoad() {
+    if (!S.load) return;
+    S.load.confirmed = true;
+    S._events = S._events.concat(S._previewEvents || []); S._previewEvents = [];
+    announce(S._pendingEvents); S._pendingEvents = [];
+    saveLedger();
+    if (S.mode === 'connected' && S.analysis) api('PUT', '/api/summary/' + S.team.id, execSummary()).catch(() => {});
+    render(); toast(`Saved to ${S.team.name || S.team.id}'s ledger`);
+  }
+  function discardLoad() {
+    S.ledger = clone(S.baseLedger);
+    S.raw = null; S.norm = []; S.allIncidents = []; S.incidents = []; S.analysis = null; S.load = null; S.fileName = '';
+    S._pendingEvents = []; S._previewEvents = [];
+    $('#drawer').classList.remove('open'); S.selected = null;
+    render(); toast('Load discarded. Nothing was saved.');
+  }
+  function blockedByPreview() {
+    if (!isPreview()) return false;
+    toast(S.load.demo ? 'Demo data is never saved, so this is off while it is loaded.' : 'Save or discard this load first.', true);
+    return true;
+  }
+
+  // ---------- Rebaseline ----------
+  function rebaselineModal(id) {
+    const o = S.ledger.offenders[id]; if (!o) return;
+    const r = C.baselineFrom(o, S.analysis, S.incidents), b = o.baseline, root = $('#modalRoot');
+    root.innerHTML = `<div class="overlay"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="rbTitle"><h2 id="rbTitle">Rebaseline ${esc(o.name)}</h2>
+      <p class="muted small">Savings are measured against the baseline, which is set the first time a pattern is tracked. If that load was wrong, for example stitched exports or another team's incidents, set it again from the data loaded now.</p>
+      <div class="grid2">
+        <div><label class="f">Current baseline</label><div><b class="num">${b ? fmt(b.perMonth) : 'None'}</b>${b ? ' a month' : ''}</div><div class="small muted">${b ? `Set ${dt(b.at)} from ${fmt(b.count, 0)} incidents` : 'Not set yet'}</div></div>
+        <div><label class="f">From this load</label>${r.error ? `<div class="small">${esc(r.error)}</div>` : `<div><b class="num">${fmt(r.baseline.perMonth)}</b> a month</div><div class="small muted">${fmt(r.baseline.count, 0)} incidents, ${dt(r.window.from)} to ${dt(r.window.to)}${r.window.preFix ? ', before the fix' : ''}</div>`}</div>
+      </div>
+      ${r.error ? '' : '<label class="f" for="rbNote" style="margin-top:14px">Reason, kept in the history</label><input type="text" id="rbNote" style="width:100%" placeholder="First load had overlapping exports">'}
+      <div class="row" style="margin-top:12px">${r.error ? '' : '<button class="btn primary" id="rbGo">Rebaseline</button>'}<button class="btn" id="rbCancel">Cancel</button></div>
+      <div id="rbOut" class="small warnline" style="margin-top:8px"></div></div></div>`;
+    $('#rbCancel').onclick = () => { root.innerHTML = ''; };
+    if (!$('#rbGo')) return;
+    $('#rbGo').onclick = () => {
+      const note = $('#rbNote').value.trim();
+      if (!note) { $('#rbOut').textContent = 'Add a reason first.'; $('#rbNote').focus(); return; }
+      try {
+        const res = C.rebaseline(S.ledger, id, S.analysis, S.incidents, { note, by: 'ui' });
+        saveLedger(); root.innerHTML = ''; openOffender(id); render();
+        toast(`Baseline set to ${fmt(res.baseline.perMonth)} a month${isPreview() ? '. Save the load to keep it.' : ''}`);
+      } catch (e) { $('#rbOut').textContent = e.message; }
+    };
+    $('#rbNote').focus();
+  }
+
+  // ---------- Onboard a team ----------
+  const SN_FIELDS = ['number', 'short_description', 'description', 'opened_at', 'resolved_at', 'assignment_group', 'cmdb_ci', 'category', 'priority', 'close_notes', 'state'];
+  const OWNER_RE = /^@[\w.\-/]+(\s+@[\w.\-/]+)*$/;
+  const byLine = s => String(s || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  const uniq = arr => arr.filter((x, i) => arr.findIndex(y => y.toLowerCase() === x.toLowerCase()) === i);
+  const slug = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+  function tally(incs, key) { const m = new Map(); for (const i of incs) { const v = String(i[key] || '').trim(); if (v) m.set(v, (m.get(v) || 0) + 1); } return Array.from(m.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])); }
+  function onboardModal() {
+    const src = S.allIncidents || [], owners = C.ownershipMap(S.teams).byGroup, connected = S.mode === 'connected', ciSel = {};
+    const rates = (S.team.hoursModel && S.team.hoursModel.rates) || {};
+    const root = $('#modalRoot');
+    root.innerHTML = `<div class="overlay"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="obTitle"><h2 id="obTitle">Onboard a team</h2>
+      <p class="muted small">${connected ? 'Creates teams/&lt;id&gt;/team.json on its own branch and opens a merge request for review.' : 'Builds team.json for you to add as teams/&lt;id&gt;/team.json through a merge request.'} ${src.length ? `Groups and CIs below come from the loaded ${S.load && S.load.demo ? 'demo data' : 'file'} (${fmt(src.length, 0)} incidents).` : 'Load an incident export first to pick groups and CIs from your own data, or type them below.'} No credentials go in this file.</p>
+      <div class="grid2">
+        <div><label class="f" for="obName">Team name</label><input type="text" id="obName" autocomplete="off"></div>
+        <div><label class="f" for="obId">Team id, used as the folder name</label><input type="text" id="obId" class="mono" autocomplete="off"></div>
+        <div><label class="f" for="obBu">Business unit</label><input type="text" id="obBu" value="${esc(S.team.bu || '')}"></div>
+        <div><label class="f" for="obApps">Apps, comma separated</label><input type="text" id="obApps"></div>
+        <div><label class="f" for="obLead">Team lead</label><input type="text" id="obLead"></div>
+        <div><label class="f" for="obOwner">GitLab code owner for the team folder</label><input type="text" id="obOwner" class="mono" placeholder="@payments-sre"></div>
+        <div><label class="f" for="obJira">Jira project key</label><input type="text" id="obJira" class="mono" placeholder="SRE"></div>
+        <div><label class="f" for="obDays">Days to pull from ServiceNow</label><input type="number" id="obDays" value="90" min="7" max="365"></div>
+        <div><label class="f" for="obRateT">Technical rate per hour</label><input type="number" id="obRateT" value="${esc(rates.technical || 85)}" min="0"></div>
+        <div><label class="f" for="obRateB">Business rate per hour</label><input type="number" id="obRateB" value="${esc(rates.business || 60)}" min="0"></div>
+      </div>
+      <div class="section"><h3>Assignment groups</h3><p class="small muted">Incidents in these groups count for this team. A group can belong to one team only.</p>
+        <div class="ob-list" id="obGroups">${tally(src, 'group').map(([g, n]) => { const o = owners.get(g.toLowerCase()); return `<label class="check"${o ? ` title="Already belongs to ${esc(o.team)}"` : ''}><input type="checkbox" data-g="${esc(g)}"${o ? ' disabled' : ''}> ${esc(g)} <span class="muted">${fmt(n, 0)}${o ? `, belongs to ${esc(o.team)}` : ''}</span></label>`; }).join('') || '<div class="empty-note">No groups in the loaded data.</div>'}</div>
+        <label class="f" for="obGroupsExtra">Other groups, one per line</label><textarea id="obGroupsExtra" style="min-height:56px"></textarea></div>
+      <div class="section"><h3>Components and CIs</h3><p class="small muted">Components roll your CIs up for the dashboard. A CI you leave unmapped shows as unmapped rather than being guessed from incident text.</p>
+        <label class="f" for="obComps">Components, one per line</label><textarea id="obComps" style="min-height:56px" placeholder="Batch&#10;JBoss&#10;Payments AWS"></textarea>
+        <div class="ob-list" id="obCis"></div>
+        <label class="f" for="obCisExtra">Other CIs, one per line as Component: CI name</label><textarea id="obCisExtra" style="min-height:56px"></textarea></div>
+      <div class="section"><h3>Preview</h3><div id="obPreview" class="small"></div><div id="obChecks" class="small" style="margin-top:8px"></div>
+        <div class="row" style="margin-top:12px">${connected ? '<button class="btn primary" id="obMr">Open merge request</button><button class="btn" id="obSave">Save to this clone only</button>' : '<button class="btn primary" id="obDl">Download team.json</button>'}<button class="btn" id="obCancel">Cancel</button></div>
+        <div id="obOut" class="small" style="margin-top:8px"></div></div>
+    </div></div>`;
+    const val = id => $('#' + id).value.trim();
+    const groups = () => uniq($$('#obGroups input[data-g]:checked').map(x => x.dataset.g).concat(byLine($('#obGroupsExtra').value)));
+    const comps = () => uniq(byLine($('#obComps').value));
+    const extraCis = () => { const out = [], bad = []; for (const l of byLine($('#obCisExtra').value)) { const m = l.match(/^([^:]+):\s*(.+)$/); if (m) out.push([m[1].trim(), m[2].trim()]); else bad.push(l); } return { out, bad }; };
+    function renderCis() {
+      const gs = new Set(groups().map(g => g.toLowerCase())), names = comps();
+      const rows = gs.size ? tally(src.filter(i => gs.has(String(i.group || '').trim().toLowerCase())), 'ci') : [];
+      $('#obCis').innerHTML = !gs.size ? '<div class="empty-note">Pick groups to see their CIs.</div>' : !rows.length ? '<div class="empty-note">No CIs on these groups\' incidents in the loaded data.</div>'
+        : rows.map(([ci, n]) => `<div class="ob-ci"><span title="${esc(ci)}">${esc(ci)} <span class="muted">${fmt(n, 0)}</span></span><select data-ci="${esc(ci)}" aria-label="Component for ${esc(ci)}"><option value="">Not mapped</option>${names.map(c => `<option${ciSel[ci] === c ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select></div>`).join('');
+      $$('#obCis select[data-ci]').forEach(sel => { sel.onchange = () => { ciSel[sel.dataset.ci] = sel.value; refresh(); }; });
+    }
+    function draft() {
+      const name = val('obName'), bu = val('obBu'), names = comps(), map = {};
+      for (const [ci, c] of Object.entries(ciSel)) if (c && names.includes(c)) map[ci] = c;
+      for (const [c, ci] of extraCis().out) if (names.includes(c) && !map[ci]) map[ci] = c;
+      return clone({
+        $schema: '../../schema/team.schema.json', id: val('obId') || slug(name), name, bu: bu || undefined,
+        apps: val('obApps').split(',').map(x => x.trim()).filter(Boolean),
+        components: names.map(c => { const cis = Object.keys(map).filter(ci => map[ci] === c); return cis.length ? { name: c, cis } : { name: c }; }),
+        servicenow: { assignmentGroups: groups(), ciFilter: [], days: Math.max(7, Math.min(365, +val('obDays') || 90)), fields: SN_FIELDS.slice() },
+        hoursModel: { technicalPerIncident: 0.75, byCategory: { batch: 0.5, access: 0.5, certificate: 2, platform: 1, database: 2, other: 1 }, elapsedCapHours: 8, businessPerIncident: 1.5, rates: { technical: +val('obRateT') || 85, business: +val('obRateB') || 60 }, currency: 'USD' },
+        toil: { threshold: 60, repetitiveMin: 5 },
+        ai: { model: 'sonnet', maxTurns: 4, allowedTools: ['Read', 'Grep', 'Glob'], budgetUsdPerRun: 0.5, budgetUsdPerMonth: 25, timeoutSec: 180 },
+        dynatrace: { dimensions: Object.assign(bu ? { bu } : {}, { env: 'prod' }), pushMetrics: true, pushBizevents: true },
+        jira: { projectKey: val('obJira') || 'SRE', issueType: 'Story', labels: ['toil'] },
+        runbooks: [],
+        contacts: Object.assign({ lead: val('obLead') }, val('obOwner') ? { codeowner: val('obOwner') } : {})
+      });
+    }
+    function problems(t) {
+      const p = [], names = comps(), x = extraCis();
+      if (!t.name) p.push('Add a team name.');
+      if (!/^[a-z0-9-]+$/.test(t.id)) p.push('Team id can only use lowercase letters, digits and dashes.');
+      else if (S.teams.some(y => y.id === t.id)) p.push(`Team id ${t.id} is already taken.`);
+      if (!t.servicenow.assignmentGroups.length) p.push('Pick at least one assignment group.');
+      for (const g of t.servicenow.assignmentGroups) { const o = owners.get(g.toLowerCase()); if (o && o.team !== t.id) p.push(`${g} already belongs to ${o.team}.`); }
+      x.bad.forEach(l => p.push(`Write "${l}" as Component: CI name.`));
+      x.out.forEach(([c, ci]) => { if (!names.includes(c)) p.push(`"${c}" is not one of the components listed above.`); else if (ciSel[ci] && names.includes(ciSel[ci]) && ciSel[ci] !== c) p.push(`${ci} is mapped to both ${ciSel[ci]} and ${c}.`); });
+      if (val('obOwner') && !OWNER_RE.test(val('obOwner'))) p.push('Code owner must look like @user or @group/subgroup.');
+      if (val('obJira') && !/^[A-Z][A-Z0-9_]+$/.test(val('obJira'))) p.push('Jira project key is capital letters and digits, like SRE.');
+      return p;
+    }
+    let timer = null;
+    const refresh = () => { clearTimeout(timer); timer = setTimeout(update, 200); };
+    function update() {
+      const t = draft(), p = problems(t), el = $('#obPreview');
+      if (!el) return;
+      $('#obChecks').innerHTML = p.map(x => `<p class="warnline">${esc(x)}</p>`).join('');
+      ['obMr', 'obSave', 'obDl'].forEach(id => { const b = $('#' + id); if (b && !b.dataset.done) b.disabled = p.length > 0; });
+      if (!t.servicenow.assignmentGroups.length) { el.textContent = 'Pick at least one group to preview this team.'; return; }
+      if (!src.length) { el.textContent = 'Load an incident export to preview this team\'s offenders.'; return; }
+      const load = C.prepareLoad(src, t, S.teams.filter(y => y.id !== t.id).concat([t]));
+      const a = C.analyze(load.incidents, t, S.catalog), top = a.clusters.filter(c => c.flags.toil).slice(0, 5);
+      const unmapped = t.components.some(c => c.cis) ? a.clusters.filter(c => c.component === 'unmapped').reduce((n, c) => n + c.count, 0) : 0;
+      el.innerHTML = `<p>${fmt(a.kpis.incidents, 0)} incidents in these groups and ${a.kpis.toilClusters} toil patterns, about ${fmt(a.kpis.projectedSavedHoursPerMonth, 0)} hours a month that could be saved.${unmapped ? ` ${fmt(unmapped, 0)} incidents sit on CIs no component claims.` : ''}</p>${top.length ? `<div style="margin-top:6px">${top.map(c => `<div class="ob-top"><span title="${esc(c.name)}">${esc(c.name)}</span><span class="num">${fmt(c.count, 0)} incidents, ${fmt(c.perMonth)} a month${t.components.length ? `, ${esc(c.component)}` : ''}</span></div>`).join('')}</div>` : ''}`;
+    }
+    async function send(openMr) {
+      const t = draft(); if (problems(t).length) return;
+      const btns = ['obMr', 'obSave'].map(id => $('#' + id)).filter(Boolean);
+      btns.forEach(b => { b.disabled = true; });
+      $('#obOut').textContent = openMr ? 'Creating the branch and merge request…' : 'Saving…';
+      try {
+        const r = await api('POST', '/api/teams/onboard', { team: t, codeowner: val('obOwner'), openMr });
+        btns.forEach(b => { b.dataset.done = '1'; });
+        $('#obOut').innerHTML = `Saved ${esc(r.file)}${r.branch ? ` on branch ${esc(r.branch)}${r.pushed ? ' and pushed it' : ''}` : ''}${r.codeowners ? ', with a CODEOWNERS line for the folder' : ''}.${r.mrUrl ? ` <a href="${esc(r.mrUrl)}" target="_blank" rel="noopener">Open the merge request</a>.` : ''}${r.notes.length ? '<br>' + r.notes.map(esc).join('<br>') : ''}<br>${openMr ? 'The team shows up in the team list once the merge request is merged and you sync the repo.' : 'The team is in this clone now and in the team list.'}`;
+        if (!openMr) { S.teams = await api('GET', '/api/teams'); renderTeamSelect(); $('#teamSel').value = S.team.id; }
+      } catch (e) { $('#obOut').textContent = e.message; btns.forEach(b => { b.disabled = false; }); }
+    }
+    $('#obName').oninput = () => { if (!$('#obId').dataset.touched) $('#obId').value = slug(val('obName')); refresh(); };
+    $('#obId').oninput = () => { $('#obId').dataset.touched = '1'; refresh(); };
+    ['obBu', 'obApps', 'obLead', 'obOwner', 'obJira', 'obDays', 'obRateT', 'obRateB', 'obCisExtra'].forEach(id => { $('#' + id).oninput = refresh; });
+    $('#obComps').oninput = () => { renderCis(); refresh(); };
+    $('#obGroupsExtra').oninput = () => { renderCis(); refresh(); };
+    $$('#obGroups input[data-g]').forEach(x => { x.onchange = () => { renderCis(); refresh(); }; });
+    $('#obCancel').onclick = () => { root.innerHTML = ''; };
+    if ($('#obMr')) $('#obMr').onclick = () => send(true);
+    if ($('#obSave')) $('#obSave').onclick = () => send(false);
+    if ($('#obDl')) $('#obDl').onclick = () => {
+      const t = draft(); if (problems(t).length) return;
+      download('team.json', JSON.stringify(t, null, 2) + '\n', 'application/json');
+      localStorage.setItem('ta:team:' + t.id, JSON.stringify(t));
+      if (!S.teams.some(y => y.id === t.id)) S.teams.push(t);
+      renderTeamSelect(); $('#teamSel').value = S.team.id;
+      const owner = val('obOwner');
+      $('#obOut').innerHTML = `Downloaded team.json. Add it to the repo as <span class="mono">teams/${esc(t.id)}/team.json</span> in a merge request${owner ? `, and add <span class="mono">/teams/${esc(t.id)}/ ${esc(owner)}</span> to CODEOWNERS` : ''}. It is also in this browser's team list, so you can use it now.`;
+    };
+    renderCis(); update(); $('#obName').focus();
+  }
+
+  // ---------- Propose signature ----------
+  function proposeModal(c) {
+    const sig = C.proposeSignature(c, S.team, S.team.id);
+    const root = $('#modalRoot');
+    root.innerHTML = `<div class="overlay"><div class="modal"><h2>Propose a shared signature</h2><p class="muted small">Merged signatures make this pattern known to every team. Keep the regex specific: CI checks that your samples match and that no other signature claims them.</p>
+      <div class="grid2"><div><label class="f">Id</label><input type="text" id="pId" value="${esc(sig.id)}"></div><div><label class="f">Name</label><input type="text" id="pName" value="${esc(sig.name)}"></div>
+      <div><label class="f">Category</label><select id="pCat">${['batch', 'certificate', 'access', 'messaging', 'platform', 'database', 'file-transfer', 'api', 'other'].map(x => `<option ${x === sig.category ? 'selected' : ''}>${x}</option>`).join('')}</select></div><div><label class="f">Disposition</label><select id="pDisp">${['eliminate', 'automate', 'selfheal', 'tune', 'accept'].map(x => `<option value="${x}" ${x === sig.disposition ? 'selected' : ''}>${C.DISPOSITION_LABEL[x]}</option>`).join('')}</select></div></div>
+      <label class="f" style="margin-top:8px">Regex (case-insensitive, tested on short description + description)</label><input type="text" id="pRe" class="mono" value="${esc(sig.match.regex)}" style="width:100%">
+      <div id="pTest" class="small" style="margin:6px 0"></div>
+      <label class="f">Samples (one per line)</label><textarea id="pSamples" style="min-height:80px">${esc(sig.samples.join('\n'))}</textarea>
+      <label class="f">Automation hint</label><input type="text" id="pHint" style="width:100%" placeholder="How would this be automated or eliminated?">
+      <div class="row" style="margin-top:12px">${S.mode === 'connected' ? `<button class="btn primary" id="pMr">Save and open merge request</button><button class="btn" id="pSave">Save to signatures/proposed only</button>` : `<button class="btn primary" id="pDl">Download proposal JSON</button>`}<button class="btn" id="pCancel">Cancel</button></div><div id="pOut" class="small" style="margin-top:8px"></div></div></div>`;
+    const test = () => { let re; try { re = new RegExp($('#pRe').value, 'i'); } catch (e) { $('#pTest').textContent = 'Invalid regex: ' + e.message; return; } const m = S.incidents.filter(i => re.test(i.short + '\n' + i.description)); const own = c.incidents.filter(i => re.test(S.incidents[i].short + '\n' + S.incidents[i].description)).length; const others = S.catalog.filter(s => { try { return new RegExp(s.match.regex, 'i').test($('#pSamples').value.split('\n')[0] || ''); } catch (e) { return false; } }); $('#pTest').innerHTML = `Matches <b>${m.length}</b> loaded incidents (${own} of this pattern's ${c.count})${m.length > c.count * 1.5 ? ' — too broad?' : ''}${others.length ? ` · <b>overlaps</b> ${others.map(s => esc(s.id)).join(', ')}` : ''}`; };
+    $('#pRe').oninput = test; test();
+    const build = () => Object.assign(sig, { id: $('#pId').value.trim(), name: $('#pName').value.trim(), category: $('#pCat').value, disposition: $('#pDisp').value, match: { regex: $('#pRe').value, flags: 'i', fields: ['short', 'description'] }, samples: $('#pSamples').value.split('\n').map(s => s.trim()).filter(Boolean), automationHint: $('#pHint').value.trim() });
+    $('#pCancel').onclick = () => root.innerHTML = '';
+    if ($('#pDl')) $('#pDl').onclick = () => { const s = build(); download(`${s.id}.json`, JSON.stringify(s, null, 2), 'application/json'); root.innerHTML = ''; toast('Add the file under signatures/proposed/ in a merge request'); };
+    const send = async openMr => { const s = build(); if (!/^[a-z0-9-]+$/.test(s.id)) return toast('Id must be lowercase letters, digits and dashes', true); $('#pOut').textContent = 'Working…'; try { const r = await api('POST', '/api/signatures/propose', { signature: s, openMr, team: S.team.id }); $('#pOut').innerHTML = `Saved ${esc(r.file)}${r.branch ? ` · branch ${esc(r.branch)}${r.pushed ? ' pushed' : ''}` : ''}${r.mrUrl ? ` · <a href="${esc(r.mrUrl)}" target="_blank" rel="noopener">open merge request</a>` : ''}${r.notes.length ? '<br>' + r.notes.map(esc).join('<br>') : ''}`; const sg = await api('GET', '/api/signatures'); S.proposed = sg.proposed; } catch (e) { $('#pOut').textContent = e.message; } };
+    if ($('#pMr')) $('#pMr').onclick = () => send(true);
+    if ($('#pSave')) $('#pSave').onclick = () => send(false);
+  }
+
+  // ---------- Dynatrace ----------
+  S._events = []; S._live = {}; S._previewEvents = []; S._pendingEvents = [];
+  function queueBizevent(ev) { if (ev) (isPreview() ? S._previewEvents : S._events).push(C.bizevent(S.team, ev.offender, ev.from, ev.to)); }
+  async function pushMetrics() {
+    if (!S.analysis) return toast('Load data first', true);
+    if (blockedByPreview()) return;
+    const lines = C.metricsLines(S.analysis, S.ledger, S.team);
+    try { const r = await api('POST', '/api/metrics/push', { lines, events: S._events }); toast(`Pushed ${r.metrics ? r.metrics.lines : 0} metric lines${r.bizevents ? ', ' + r.bizevents.events + ' milestone events' : ''}`); S._events = []; } catch (e) { toast('Push failed: ' + e.message, true); }
+  }
+
+  // ---------- wiring ----------
+  function wire() {
+    $$('#nav button').forEach(b => b.onclick = () => { S.view = b.dataset.view; if (S.view === 'exec' && S.mode === 'connected') api('GET', '/api/exec').then(x => { S.exec = x; renderExec(); }).catch(() => {}); render(); });
+    $('#teamSel').onchange = e => selectTeam(e.target.value);
+    $('#btnLoad').onclick = () => $('#csvFile').click();
+    $('#csvFile').onchange = e => { const f = e.target.files[0]; if (!f) return; f.text().then(t => loadCSVText(t, f.name)); e.target.value = ''; };
+    $('#btnDemo').onclick = () => { loadCSVText(C.demoCSV(42, 90), 'demo-incidents.csv', { demo: true }); toast('Demo data loaded: 90 days of an invented estate. Nothing from it is saved.'); };
+    $('#dataSel').onchange = async e => { const f = e.target.value; if (!f) return; try { const res = await fetch('/api/data/' + encodeURIComponent(f)); loadCSVText(await res.text(), f); } catch (err) { toast(err.message, true); } };
+    $('#btnPull').onclick = async () => { $('#btnPull').disabled = true; toast('Pulling from ServiceNow…'); try { const r = await api('POST', '/api/pull', { team: S.team.id }); toast(`${r.rows} incidents → data/${r.file}`); await selectTeam(S.team.id); $('#dataSel').value = r.file; $('#dataSel').dispatchEvent(new Event('change')); } catch (e) { toast('Pull failed: ' + e.message, true); } $('#btnPull').disabled = false; };
+    $('#btnSync').onclick = async () => { try { const r = await api('POST', '/api/git/pull'); toast(r.ok ? (r.note ? r.note : 'Repo synced: ' + (r.output.split('\n').pop() || 'up to date')) : 'Sync failed: ' + r.error, !r.ok || !!r.note); S.teams = await api('GET', '/api/teams'); const sg = await api('GET', '/api/signatures'); S.catalog = sg.catalog; S.proposed = sg.proposed; renderTeamSelect(); await selectTeam(S.team.id); } catch (e) { toast(e.message, true); } };
+    $('#btnPresent').onclick = () => { document.body.classList.add('present'); const b = document.createElement('button'); b.className = 'btn present-exit'; b.textContent = 'Exit'; b.onclick = () => { document.body.classList.remove('present'); b.remove(); }; document.body.appendChild(b); };
+    ['offSearch', 'offCat', 'offState', 'offToil', 'offUnknown'].forEach(id => $('#' + id).oninput = renderOffenders);
+    ['incSearch', 'incSig'].forEach(id => $('#' + id).oninput = renderIncidents);
+    $('#btnExportOff').onclick = () => S._offRows && download(`${S.team.id}-offenders.csv`, C.toCSV(S._offRows.map(c => ({ pattern: c.name, category: c.category, count: c.count, per_month: +c.perMonth.toFixed(2), score: c.score, disposition: c.disposition, state: (S.ledger.offenders[c.id] || {}).state || '', saves_hours_per_month: c.savings.hoursPerMonth, saves_usd_per_year: c.savings.usdPerYear, known: c.known, id: c.id }))), 'text/csv');
+    $('#btnExportInc').onclick = () => S._incRows && download(`${S.team.id}-incidents.csv`, C.toCSV(S._incRows.map(i => i.raw), S.raw.headers), 'text/csv');
+    $('#btnRemap').onclick = () => { $$('#mapping select').forEach(s => { if (s.value) S.mapping[s.dataset.f] = s.value; else delete S.mapping[s.dataset.f]; }); $('#incSig').innerHTML = '<option value="">All patterns</option>'; applyMapping(); toast('Re-analyzed'); };
+    $('#btnLedgerExport').onclick = () => download(`${S.team.id}-ledger.json`, JSON.stringify(S.ledger, null, 2), 'application/json');
+    $('#btnLedgerImport').onclick = () => $('#ledgerFile').click();
+    $('#ledgerFile').onchange = e => { const f = e.target.files[0]; if (!f) return; if (blockedByPreview()) { e.target.value = ''; return; } f.text().then(t => { const l = safeJSON(t, null); if (!l || !l.offenders) return toast('Not a ledger file', true); l.team = S.team.id; S.ledger = l; saveLedger(); render(); toast('Ledger imported'); }); e.target.value = ''; };
+    $('#btnCommit').onclick = async () => { try { const r = await api('POST', '/api/git/commit', { message: `toil-analyzer(${S.team.id}): ledger and reports`, push: true }); toast(r.ok ? (r.pushed ? 'Committed and pushed' : 'Committed locally' + (r.pushError ? ' — push failed: ' + r.pushError : '')) : 'Nothing to commit: ' + r.error, !r.ok || r.pushed === false); } catch (e) { toast(e.message, true); } };
+    $('#btnJira').onclick = async () => { if (blockedByPreview()) return; $('#btnJira').disabled = true; try { const r = await api('POST', '/api/jira/sync', { team: S.team.id }); adoptLedger(r.ledger); render(); toast(r.events.length ? r.events.map(e => `${e.name}: ${C.STATE_LABEL[e.from]} → ${C.STATE_LABEL[e.to]}`).join(' · ') : `Checked ${r.checked} Jira issue(s), nothing moved`); } catch (e) { toast('Jira sync failed: ' + e.message, true); } $('#btnJira').disabled = false; };
+    $('#btnReTest').onclick = () => { let re; try { re = new RegExp($('#reTest').value, $('#reFlags').value.replace('g', '')); } catch (e) { $('#reOut').textContent = 'Invalid regex: ' + e.message; return; } const m = S.incidents.filter(i => re.test(i.short + '\n' + i.description)); $('#reOut').innerHTML = `<b>${m.length}</b> of ${S.incidents.length} incidents match` + (m.length ? '<br>' + m.slice(0, 5).map(i => `<span class="mono">${esc(i.number)}</span> ${esc(i.short)}`).join('<br>') : ''); };
+    $('#btnReportCopy').onclick = () => S._report && copy(S._report);
+    $('#btnReportDl').onclick = () => S._report && download(`${S.team.id}-${C.weekKey(new Date())}.md`, S._report, 'text/markdown');
+    $('#btnReportSave').onclick = async () => { if (!S._report) return; if (blockedByPreview()) return; try { const r = await api('POST', '/api/report', { team: S.team.id, name: C.weekKey(new Date()), markdown: S._report }); toast('Saved ' + r.file); } catch (e) { toast(e.message, true); } };
+    $('#btnPush').onclick = pushMetrics;
+    $('#btnTeamSave').onclick = async () => { const t = safeJSON($('#teamJson').value, null); if (!t || !t.id) return $('#teamMsg').textContent = 'Invalid JSON or missing id.'; t.hoursModel = t.hoursModel || {}; t.hoursModel.rates = { technical: +$('#setRateT').value || 85, business: +$('#setRateB').value || 60 }; t.toil = Object.assign(t.toil || {}, { threshold: +$('#setThreshold').value || 60, repetitiveMin: +$('#setRepMin').value || 5 }); try { await saveTeam(t); renderTeamSelect(); await selectTeam(t.id); toast('Team saved'); } catch (e) { $('#teamMsg').textContent = e.message; } };
+    $('#btnTeamDl').onclick = () => download('team.json', $('#teamJson').value, 'application/json');
+    $('#btnOnboard').onclick = () => onboardModal();
+    $('#btnTeamNew').onclick = () => { const id = prompt('New team id (lowercase, dashes):', ''); if (!id || !/^[a-z0-9-]+$/.test(id)) return; const t = safeJSON($('#teamJson').value, {}); t.id = id; t.name = prompt('Team name:', id) || id; $('#teamJson').value = JSON.stringify(t, null, 2); $('#btnTeamSave').click(); };
+    $('#btnClearLocal').onclick = () => { if (!confirm('Remove the local ledger and team edits for ' + S.team.id + '?')) return; localStorage.removeItem('ta:ledger:' + S.team.id); localStorage.removeItem('ta:team:' + S.team.id); selectTeam(S.team.id); };
+    $('#drawerClose').onclick = () => { $('#drawer').classList.remove('open'); S.selected = null; };
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') { $('#drawer').classList.remove('open'); $('#modalRoot').innerHTML = ''; } });
+    const main = $('.main'); main.addEventListener('dragover', e => { e.preventDefault(); main.classList.add('over'); }); main.addEventListener('dragleave', () => main.classList.remove('over')); main.addEventListener('drop', e => { e.preventDefault(); main.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) f.text().then(t => loadCSVText(t, f.name)); });
+  }
+  let toastTimer = null;
+  function toast(msg, isErr) { const r = $('#toastRoot'); r.innerHTML = `<div class="toast ${isErr ? 'err' : ''}">${esc(msg)}</div>`; clearTimeout(toastTimer); toastTimer = setTimeout(() => r.innerHTML = '', isErr ? 6000 : 3200); }
+
+  boot().catch(e => { console.error(e); toast('Startup problem: ' + e.message, true); });
+})();
+
+</script>
+<!-- @endinline:app -->
+</body>
+</html>

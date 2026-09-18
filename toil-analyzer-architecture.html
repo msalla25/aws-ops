@@ -188,6 +188,7 @@ a{color:var(--plum)}
   <li><strong>Parse.</strong> <code>parseCSV</code> detects the delimiter (<code>, ; tab |</code>), honours quotes, doubled quotes and newlines inside quotes, strips a BOM.</li>
   <li><strong>Map columns.</strong> <code>detectMapping</code> matches header names against patterns for twelve fields (number, short description, description, opened, resolved, assignment group, CI, category, priority, close notes, state, assigned). The Incidents view shows the mapping and lets you correct it; re-analysis is instant.</li>
   <li><strong>Normalise.</strong> Dates are parsed leniently (<code>2026-08-14 09:23:11</code>, <code>08/14/2026 09:23 AM</code>, <code>14/08/2026</code>).</li>
+  <li><strong>Check the load.</strong> <code>prepareLoad</code> drops rows that repeat an incident number, keeping the most recent version; keeps only the selected team's assignment groups, using an ownership map built from every team file; and flags a load that looks off: more than half not the team's, 5% or more duplicates, or a team with no groups. A flagged load is a preview in the UI (nothing saved until someone confirms) and is skipped by the scheduled report.</li>
   <li><strong>Mask.</strong> <code>maskText</code> replaces volatile tokens so two incidents that differ only in a job name, host, ID or number collapse into one pattern. Team patterns run first (<code>team.json → maskPatterns</code>, e.g. <code>\b(CTM|LN|PAY)_[A-Z0-9_]+\b → &lt;job&gt;</code>), then the built-ins:
     <pre><code>URLs → &lt;url&gt;   emails → &lt;email&gt;   INC/CHG/TASK/RITM/PRB numbers → &lt;ticket&gt;   GUIDs → &lt;guid&gt;   32-hex → &lt;hash&gt;
 IPv4 → &lt;ip&gt;   ISO and US dates/times → &lt;date&gt; / &lt;time&gt;   yyyymmdd → &lt;date&gt;   paths → &lt;path&gt;
@@ -241,6 +242,7 @@ Verified   = (baseline perMonth − post-fix perMonth) × hours/incident    (wha
 
 <h2 id="ledger">5. The kill chain ledger</h2>
 <p><code>ledger/&lt;team&gt;/ledger.json</code> holds one entry per tracked pattern: state, history, disposition, Jira key, owner, the <strong>baseline</strong> captured when the pattern was first registered (per-month rate and hours per incident — kept even after the incidents disappear, which is the point), the <strong>latest</strong> observation, verification windows and the AI cost spent on it. Toil candidates register automatically as <em>Detected</em> on every analysis.</p>
+<p><strong>Rebaseline.</strong> The baseline is captured once, so a bad first load (stitched exports, another team's incidents) would overstate savings for good. <code>rebaseline</code> resets it from the loaded data and writes a history entry with the reason. For an offender that was fixed it counts only incidents opened before the fix, over the part of the window before the fix, and refuses if that is shorter than two weeks, so it cannot erase real savings.</p>
 
 <div class="fig">
 <svg viewBox="0 0 960 250" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif" font-size="12">
@@ -324,6 +326,7 @@ Verified   = (baseline perMonth − post-fix perMonth) × hours/incident    (wha
 <pre><code>node server/pull.js   --team example-team [--days 90]   # ServiceNow Table API → data/&lt;team&gt;-&lt;yyyymmdd&gt;.csv
 node server/report.js --team example-team --push        # analyze → Jira sync → advance ledger → summary → report → Dynatrace
 # --all runs every team; --file x.csv analyses a file instead of the latest pull; --no-jira skips the Jira step</code></pre>
+<p>The report runs the same load checks as the UI. A file that fails them is skipped with exit code 3 and nothing written, so the scheduler shows it; <code>--force</code> accepts it.</p>
 <ol>
   <li><strong>pull.js</strong> builds <code>sysparm_query</code> from <code>team.json → servicenow</code>: <code>opened_at ≥ now − days ^ assignment_group.nameIN… ^ cmdb_ci.nameIN… ^ extraQuery</code>, fetches the listed fields as display values, pages by 1000 and writes the CSV the UI reads.</li>
   <li><strong>report.js</strong> re-runs the engine on the newest file, auto-registers new toil candidates, asks Jira about every Ticketed/Fixed offender with a key (Done → Fixed; reopened → Ticketed), advances Fixed → Verified / Verified → Regressed, writes <code>ledger/&lt;team&gt;/summary.json</code> (what the executive rollup reads) and <code>reports/&lt;team&gt;/YYYY-Www.md</code>, then pushes metric lines and one business event per transition.</li>
@@ -354,6 +357,8 @@ ledger/&lt;id&gt;/             ledger.json + summary.json · reports/&lt;id&gt;/
 plugins/toil-analyzer/   Claude Code plugin (skill, agents, /toil-analyzer:offender) · .claude-plugin/marketplace.json
 scripts/                 build.js · validate.js · test-signatures.js · smoke.js       .gitlab-ci.yml · CODEOWNERS
 data/, analysis-cache/   git-ignored: raw dumps and verdict cache stay on the machine</code></pre>
+<p><strong>Ownership.</strong> Each assignment group belongs to one team. <code>scripts/validate.js</code> fails an MR that claims a group twice, or that puts one CI in two components of the same team, because those incidents would otherwise count for two teams or two components on the dashboard.</p>
+<p><strong>Onboarding a team.</strong> Settings → <em>Onboard a team</em> builds <code>teams/&lt;id&gt;/team.json</code> from a loaded export: groups and CIs are picked from the data (groups another team owns are locked), CIs are grouped into components, and the team's top offenders are previewed before submitting. Connected mode commits the file and a CODEOWNERS line for the team's folder on <code>onboard/&lt;id&gt;</code>, pushes, opens the MR and returns the clone to its branch; Lite mode downloads the file. No credentials go in it. When any component lists <code>cis</code>, components are mapped from the CI field only and unclaimed CIs show as <code>unmapped</code>.</p>
 
 <h3>team.json — what a team owns</h3>
 <table>
@@ -393,6 +398,7 @@ data/, analysis-cache/   git-ignored: raw dumps and verdict cache stay on the ma
 <tr><th>Route</th><th>Does</th></tr>
 <tr><td><code>GET /api/status</code></td><td>mode, repo/branch, Node, Claude binary, which integrations are configured, teams</td></tr>
 <tr><td><code>GET /api/teams</code> · <code>GET|PUT /api/team/:id</code></td><td>team properties</td></tr>
+<tr><td><code>POST /api/teams/onboard</code></td><td>check a new team (id free, groups not owned by another team), write <code>teams/&lt;id&gt;/team.json</code> and an optional CODEOWNERS line on <code>onboard/&lt;id&gt;</code>, push, open the MR</td></tr>
 <tr><td><code>GET /api/signatures</code> · <code>POST /api/signatures/propose</code></td><td>catalog + proposed; write proposal, branch, commit, push, open MR (<code>openMr: true</code>)</td></tr>
 <tr><td><code>GET /api/data[?team=]</code> · <code>GET /api/data/:file</code> · <code>POST /api/pull</code></td><td>list/open dumps in <code>data/</code>; pull from ServiceNow</td></tr>
 <tr><td><code>GET|PUT /api/ledger/:team</code> · <code>PUT /api/summary/:team</code> · <code>GET /api/exec</code></td><td>ledger, KPI snapshot, all-teams rollup</td></tr>
@@ -442,6 +448,9 @@ data/, analysis-cache/   git-ignored: raw dumps and verdict cache stay on the ma
 
 <h2 id="limits">13. Known limits and next steps</h2>
 <ul>
+  <li>Offenders are keyed by signature, so the same signature on two platforms within one team is still one offender with one count and one Jira. Keying offenders by signature plus component, with a one-time ledger carry-over, is the next step.</li>
+  <li>Incidents typed by people and incidents raised by monitoring are treated alike. Trusting integration-raised text, and asking typed incidents to agree with a structured field, needs CI class, opened by and correlation ID in the export.</li>
+  <li>The Lite page only knows the teams stored in that browser, so its breakdown can call another team's incidents unowned. The selected team still keeps only its own groups; Connected mode and CI see every team.</li>
   <li>Business hours are elapsed time capped per incident, not calendar-aware working hours. A business-calendar option in <code>hoursModel</code> is the obvious refinement.</li>
   <li>ServiceNow OAuth tokens are used as given; there is no refresh flow. Long-lived service-account basic auth or a token helper in CI covers the schedule.</li>
   <li>The Jira sync moves states only; it does not create issues. <em>Copy Jira text</em> plus a Jira MCP in Claude Code is the interactive path; a create endpoint would be ~30 lines in <code>lib/jira.js</code>.</li>
