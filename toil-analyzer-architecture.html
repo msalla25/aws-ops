@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Toil Analyzer — architecture and how it works</title>
+<style>
+:root{
+  --plum:#650360; --deep:#2a0426; --lime:#b6d43b;
+  --ink:color-mix(in srgb,var(--deep) 88%,white); --ink-2:color-mix(in srgb,var(--deep) 58%,white);
+  --line:color-mix(in srgb,var(--plum) 14%,white); --line-2:color-mix(in srgb,var(--plum) 28%,white);
+  --tint:color-mix(in srgb,var(--plum) 4%,white); --tint-2:color-mix(in srgb,var(--plum) 9%,white); --tint-3:color-mix(in srgb,var(--plum) 18%,white);
+  --lime-tint:color-mix(in srgb,var(--lime) 24%,white); --lime-ink:color-mix(in srgb,var(--lime) 52%,var(--deep));
+  font-family:"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;color:var(--ink);background:#fff;font-size:15px;line-height:1.55}
+.wrap{max-width:980px;margin:0 auto;padding:28px 22px 80px}
+header{border-bottom:1px solid var(--line-2);padding-bottom:18px;margin-bottom:26px}
+header h1{font-size:30px;margin:0 0 6px;letter-spacing:-.02em;font-weight:600}
+header p{margin:0;color:var(--ink-2);max-width:70ch}
+h2{font-size:21px;margin:40px 0 12px;letter-spacing:-.01em;font-weight:600;border-left:4px solid var(--lime);padding-left:12px}
+h3{font-size:16px;margin:22px 0 8px;font-weight:600}
+p{margin:0 0 10px;max-width:78ch}
+ul,ol{max-width:78ch;padding-left:22px}li{margin-bottom:4px}
+code,pre{font-family:ui-monospace,Consolas,Menlo,monospace;font-size:13px}
+code{background:var(--tint-2);padding:1px 5px;border-radius:4px}
+pre{background:var(--tint);border:1px solid var(--line);border-radius:6px;padding:12px 14px;overflow:auto;line-height:1.45}
+pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:8px 0 14px;font-size:14px}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--ink-2);font-weight:600;font-size:12.5px}
+td code{white-space:nowrap}
+.fig{border:1px solid var(--line);border-radius:8px;padding:14px 14px 8px;margin:14px 0 18px;background:#fff}
+.fig svg{width:100%;height:auto;display:block}
+.fig .cap{font-size:12.5px;color:var(--ink-2);margin-top:6px}
+.note{border-left:3px solid var(--plum);background:var(--tint);padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0;max-width:78ch}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:760px){.grid{grid-template-columns:1fr}}
+.card{border:1px solid var(--line);border-radius:6px;padding:12px 14px}
+.card h4{margin:0 0 6px;font-size:14px}
+.toc{columns:2;column-gap:28px;font-size:14px;margin:0 0 8px;padding-left:18px}
+.toc li{break-inside:avoid}
+a{color:var(--plum)}
+.st{display:inline-block;padding:1px 8px;border-radius:4px;font-size:12px;background:var(--tint-2)}
+.st.fixed{background:var(--plum);color:#fff}.st.verified{background:var(--lime);color:var(--deep)}.st.regressed{background:var(--deep);color:#fff}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Toil Analyzer</h1>
+  <p>How the tool turns a ServiceNow incident dump into a toil kill chain with verified savings — the data flow, the math, the ledger, the Claude step, the schedule, the Dynatrace schema, and the repo conventions that let every team run the same thing.</p>
+</header>
+
+<ol class="toc">
+  <li><a href="#big-picture">Big picture</a></li>
+  <li><a href="#modes">Two modes, one file</a></li>
+  <li><a href="#engine">The engine, step by step</a></li>
+  <li><a href="#math">Scoring, hours and savings</a></li>
+  <li><a href="#ledger">The kill chain ledger</a></li>
+  <li><a href="#claude">The Claude step</a></li>
+  <li><a href="#schedule">Scheduled progress</a></li>
+  <li><a href="#dynatrace">Dynatrace</a></li>
+  <li><a href="#repo">Repository, metadata and merge flow</a></li>
+  <li><a href="#server">Local server API</a></li>
+  <li><a href="#security">Security and data handling</a></li>
+  <li><a href="#ops">Running it: setup, rhythm, troubleshooting</a></li>
+  <li><a href="#limits">Known limits and next steps</a></li>
+</ol>
+
+<h2 id="big-picture">1. Big picture</h2>
+<p>One GitLab repository is the product. Cloning it gives a team the analyzer, the shared signature catalog, their own properties file and the ledger of what they are killing. Nothing is hosted: the UI runs from the clone on a laptop, the schedule runs in GitLab CI (or Task Scheduler), and the multi-team view lives in Dynatrace.</p>
+
+<div class="fig">
+<svg viewBox="0 0 960 560" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif" font-size="12">
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--ink-2)"/></marker></defs>
+  <!-- sources -->
+  <g>
+    <rect x="20" y="40" width="170" height="70" rx="6" fill="var(--tint)" stroke="var(--line-2)"/>
+    <text x="34" y="62" font-weight="600">ServiceNow</text>
+    <text x="34" y="80" fill="var(--ink-2)">CSV export (manual)</text>
+    <text x="34" y="96" fill="var(--ink-2)">Table API (scheduled)</text>
+    <rect x="20" y="130" width="170" height="52" rx="6" fill="var(--tint)" stroke="var(--line-2)"/>
+    <text x="34" y="152" font-weight="600">Jira</text>
+    <text x="34" y="170" fill="var(--ink-2)">issue status → Fixed</text>
+    <rect x="20" y="202" width="170" height="86" rx="6" fill="var(--tint)" stroke="var(--line-2)"/>
+    <text x="34" y="224" font-weight="600">Repo (GitLab)</text>
+    <text x="34" y="242" fill="var(--ink-2)">teams/&lt;id&gt;/team.json</text>
+    <text x="34" y="258" fill="var(--ink-2)">signatures/*.json</text>
+    <text x="34" y="274" fill="var(--ink-2)">ledger/, reports/</text>
+  </g>
+  <!-- engine -->
+  <g>
+    <rect x="250" y="30" width="440" height="270" rx="8" fill="#fff" stroke="var(--plum)" stroke-width="1.5"/>
+    <text x="266" y="54" font-weight="600" font-size="14">Toil Analyzer (Node + one HTML file)</text>
+    <rect x="266" y="68" width="408" height="62" rx="6" fill="var(--tint)" stroke="var(--line)"/>
+    <text x="278" y="88" font-weight="600">Engine — lib/core.js (deterministic, zero tokens)</text>
+    <text x="278" y="106" fill="var(--ink-2)">parse → map columns → mask → signature → cluster → score</text>
+    <text x="278" y="122" fill="var(--ink-2)">→ hours (technical / business) → savings → report → metric lines</text>
+    <rect x="266" y="142" width="196" height="92" rx="6" fill="var(--tint)" stroke="var(--line)"/>
+    <text x="278" y="162" font-weight="600">UI — ui/index.html</text>
+    <text x="278" y="180" fill="var(--ink-2)">Executive · Offenders · Incidents</text>
+    <text x="278" y="196" fill="var(--ink-2)">Kill chain · Signatures · Report</text>
+    <text x="278" y="212" fill="var(--ink-2)">Settings · Present mode</text>
+    <rect x="478" y="142" width="196" height="92" rx="6" fill="var(--lime-tint)" stroke="var(--line)"/>
+    <text x="490" y="162" font-weight="600">Ledger — kill chain</text>
+    <text x="490" y="180" fill="var(--ink-2)">Detected → Ticketed → Fixed</text>
+    <text x="490" y="196" fill="var(--ink-2)">→ Verified (2 clean weeks)</text>
+    <text x="490" y="212" fill="var(--ink-2)">Regressed · Accepted · AI cost</text>
+    <rect x="266" y="246" width="408" height="40" rx="6" fill="var(--tint)" stroke="var(--line)"/>
+    <text x="278" y="264" font-weight="600">Server — server/index.js (127.0.0.1 only)</text>
+    <text x="278" y="279" fill="var(--ink-2)">files · git · Claude Code · ServiceNow · Dynatrace · Jira · GitLab MRs</text>
+  </g>
+  <!-- outputs -->
+  <g>
+    <rect x="750" y="40" width="190" height="86" rx="6" fill="var(--tint)" stroke="var(--line-2)"/>
+    <text x="764" y="62" font-weight="600">Dynatrace</text>
+    <text x="764" y="80" fill="var(--ink-2)">metrics (gauges, by team,</text>
+    <text x="764" y="96" fill="var(--ink-2)">category, component, state)</text>
+    <text x="764" y="112" fill="var(--ink-2)">bizevents = milestones</text>
+    <rect x="750" y="146" width="190" height="52" rx="6" fill="var(--tint)" stroke="var(--line-2)"/>
+    <text x="764" y="168" font-weight="600">Reports</text>
+    <text x="764" y="186" fill="var(--ink-2)">reports/&lt;team&gt;/YYYY-Www.md</text>
+    <rect x="750" y="218" width="190" height="70" rx="6" fill="var(--tint)" stroke="var(--line-2)"/>
+    <text x="764" y="240" font-weight="600">Merge requests</text>
+    <text x="764" y="258" fill="var(--ink-2)">new signatures (gaps)</text>
+    <text x="764" y="274" fill="var(--ink-2)">team onboarding</text>
+  </g>
+  <!-- bottom row -->
+  <g>
+    <rect x="250" y="340" width="210" height="96" rx="6" fill="#fff" stroke="var(--line-2)"/>
+    <text x="264" y="362" font-weight="600">Claude Code (on click)</text>
+    <text x="264" y="380" fill="var(--ink-2)">claude -p, packet ≈ 1k tokens</text>
+    <text x="264" y="396" fill="var(--ink-2)">JSON verdict, cached by signature</text>
+    <text x="264" y="412" fill="var(--ink-2)">cost → ledger → toil.ai.cost_usd</text>
+    <rect x="480" y="340" width="210" height="96" rx="6" fill="#fff" stroke="var(--line-2)"/>
+    <text x="494" y="362" font-weight="600">Schedule (no Claude)</text>
+    <text x="494" y="380" fill="var(--ink-2)">GitLab CI schedule or Task Scheduler</text>
+    <text x="494" y="396" fill="var(--ink-2)">pull.js → report.js --push</text>
+    <text x="494" y="412" fill="var(--ink-2)">advances Fixed → Verified / Regressed</text>
+    <rect x="20" y="340" width="200" height="96" rx="6" fill="#fff" stroke="var(--line-2)"/>
+    <text x="34" y="362" font-weight="600">People</text>
+    <text x="34" y="380" fill="var(--ink-2)">SRE: works offenders, tickets</text>
+    <text x="34" y="396" fill="var(--ink-2)">Teams: own team.json, propose</text>
+    <text x="34" y="412" fill="var(--ink-2)">Execs: Present mode, dashboard</text>
+  </g>
+  <!-- arrows -->
+  <g stroke="var(--ink-2)" stroke-width="1.3" fill="none" marker-end="url(#ar)">
+    <path d="M190 75 L250 75"/>
+    <path d="M190 156 L250 156"/>
+    <path d="M190 245 L250 245"/>
+    <path d="M690 83 L750 83"/>
+    <path d="M690 172 L750 172"/>
+    <path d="M690 253 L750 253"/>
+    <path d="M355 340 L355 300"/>
+    <path d="M585 340 L585 300"/>
+    <path d="M120 340 L120 288"/>
+  </g>
+  <g fill="var(--ink-2)" font-size="11">
+    <text x="196" y="68">dump</text><text x="196" y="149">status</text><text x="196" y="238">props</text>
+    <text x="698" y="76">push</text><text x="698" y="165">save</text><text x="698" y="246">MR</text>
+    <text x="362" y="324">verdict</text><text x="592" y="324">nightly</text>
+  </g>
+  <!-- legend -->
+  <text x="250" y="470" fill="var(--ink-2)" font-size="12">Solid plum border = the product. Everything left of it is an input the tool reads; everything right of it is written by the tool. The two boxes at the bottom are the only places Claude and a scheduler appear — and they never appear together.</text>
+</svg>
+<div class="cap">Figure 1 — components and data flow. The engine is the same file in the browser, in the local server and in CI.</div>
+</div>
+
+<h2 id="modes">2. Two modes, one file</h2>
+<p><code>ui/index.html</code> is built by <code>scripts/build.js</code>, which inlines the engine (<code>lib/core.js</code>), the app script (<code>ui/app.js</code>), the signature catalog and the example team. That is why the same file works from a double-click and from the server.</p>
+<table>
+<tr><th></th><th>Lite — open <code>ui/index.html</code></th><th>Connected — <code>npm start</code> → localhost:7077</th></tr>
+<tr><td>Detection</td><td><code>location.protocol</code> is <code>file:</code>, or <code>/api/status</code> is unreachable</td><td><code>/api/status</code> answers; the rail shows a lime <em>Connected</em> chip</td></tr>
+<tr><td>Data</td><td>Load CSV / drag-drop / Demo data</td><td>plus <em>Open from data/</em> and <em>Pull from ServiceNow</em></td></tr>
+<tr><td>Team properties</td><td>embedded example + browser copies (Settings → Download to share)</td><td><code>teams/&lt;id&gt;/team.json</code>, saved by the server</td></tr>
+<tr><td>Ledger</td><td><code>localStorage</code> per team; Export / Import JSON</td><td><code>ledger/&lt;id&gt;/ledger.json</code>, saved on every move (debounced); <em>Commit &amp; push</em></td></tr>
+<tr><td>Claude</td><td><em>Copy packet</em> → <code>/toil-analyzer:offender</code> in Claude Code → <em>Paste verdict</em></td><td><em>Analyze with Claude</em> streams the run live; cache and budgets enforced</td></tr>
+<tr><td>Signatures</td><td>proposal downloads as JSON for an MR</td><td>written to <code>signatures/proposed/</code>, branch, commit, push, MR opened</td></tr>
+<tr><td>Dynatrace / Jira / git</td><td>—</td><td>push metrics, sync Jira, sync repo</td></tr>
+<tr><td>Executive rollup</td><td>this team</td><td>all teams from <code>ledger/*/summary.json</code></td></tr>
+</table>
+
+<h2 id="engine">3. The engine, step by step</h2>
+<p>Everything below is pure JavaScript in <code>lib/core.js</code>. It runs identically in the browser, in <code>server/report.js</code> and in CI, and it never calls a model.</p>
+<ol>
+  <li><strong>Parse.</strong> <code>parseCSV</code> detects the delimiter (<code>, ; tab |</code>), honours quotes, doubled quotes and newlines inside quotes, strips a BOM.</li>
+  <li><strong>Map columns.</strong> <code>detectMapping</code> matches header names against patterns for twelve fields (number, short description, description, opened, resolved, assignment group, CI, category, priority, close notes, state, assigned). The Incidents view shows the mapping and lets you correct it; re-analysis is instant.</li>
+  <li><strong>Normalise.</strong> Dates are parsed leniently (<code>2026-08-14 09:23:11</code>, <code>08/14/2026 09:23 AM</code>, <code>14/08/2026</code>).</li>
+  <li><strong>Mask.</strong> <code>maskText</code> replaces volatile tokens so two incidents that differ only in a job name, host, ID or number collapse into one pattern. Team patterns run first (<code>team.json → maskPatterns</code>, e.g. <code>\b(CTM|LN|PAY)_[A-Z0-9_]+\b → &lt;job&gt;</code>), then the built-ins:
+    <pre><code>URLs → &lt;url&gt;   emails → &lt;email&gt;   INC/CHG/TASK/RITM/PRB numbers → &lt;ticket&gt;   GUIDs → &lt;guid&gt;   32-hex → &lt;hash&gt;
+IPv4 → &lt;ip&gt;   ISO and US dates/times → &lt;date&gt; / &lt;time&gt;   yyyymmdd → &lt;date&gt;   paths → &lt;path&gt;
+host-like tokens (app-node-07, ora-p1.corp.local) → &lt;host&gt;   percentages → &lt;pct&gt;   remaining numbers → #
+"Control-M job CTM_LN_ACQ_FEED_D ended NOT OK (RC=12)"  →  "control-m job &lt;job&gt; ended not ok rc=#"</code></pre></li>
+  <li><strong>Signature.</strong> The catalog is tried first: each signature's regex (case-insensitive) against the fields it names (default short description + description), highest <code>priority</code> first, first match wins. Matched incidents get the catalog id and name (<em>known</em>). Everything else gets an automatic id: the first eight non-stopword tokens of the masked text, hashed (<code>auto-xxxxxxxx</code>) — that is an <em>unknown</em> pattern, the raw material for a signature proposal.</li>
+  <li><strong>Cluster.</strong> Incidents group by signature id. Per cluster: count, per-month rate, first/last seen, weekly counts across the window, groups and CIs, inter-arrival gaps, automatable-keyword hits, masked close-note histogram, five evenly spaced samples, component (from <code>team.json → components[].match</code>, then <code>tags</code>).</li>
+  <li><strong>Score, hours, savings</strong> — section 4.</li>
+  <li><strong>Rank.</strong> Offenders sort by <code>score × ln(count + 1)</code>: volume matters, but a noisy singleton never outranks a weekly repeat.</li>
+</ol>
+
+<h2 id="math">4. Scoring, hours and savings</h2>
+<div class="grid">
+<div class="card"><h4>Toil score (0–100)</h4>
+<pre><code>score = 100 × (0.35·repetition + 0.30·automatable
+             + 0.15·regularity + 0.20·uniformity)
+
+repetition  = log10(count) / log10(50), capped at 1
+automatable = share of incidents whose text/notes contain
+              an automatable keyword (restart, rerun, unlock,
+              expired, cert, disk, requeue, …; team can override)
+regularity  = 1 − CV(inter-arrival gaps)/2, clamped 0..1
+              (needs ≥ 3 gaps; periodic causes score high)
+uniformity  = share of the most common masked close note
+              (0.5 when there are no notes)</code></pre>
+<p>Flags: <strong>toil</strong> = score ≥ threshold (60) and count ≥ 2; <strong>repetitive</strong> = count ≥ 5; <strong>automatable</strong> = automatable ≥ 0.5; <strong>unknown</strong> = no catalog match. Threshold and minimum live in <code>team.json → toil</code>.</p></div>
+<div class="card"><h4>Hours and money</h4>
+<pre><code>technical h / incident  (ops effort)
+  = signature.hours.technical
+    ?? hoursModel.byCategory[category]
+    ?? hoursModel.technicalPerIncident        (default 0.75)
+
+business h / incident   (waiting, manual workaround)
+  = min(resolved − opened, elapsedCapHours)  (default cap 8)
+    ?? signature.hours.business
+    ?? hoursModel.businessPerIncident         (default 1.5)
+
+USD = hours × rates.technical (85) | rates.business (60)
+perMonth = count / months in window  (months = days / 30.44, ≥ 1)</code></pre>
+<p>The split is deliberate: technical hours are what automation removes from the on-call plate; business hours are what the business stops waiting for. Both appear separately everywhere.</p></div>
+</div>
+<h3>Savings</h3>
+<pre><code>factor by disposition:  eliminate 1.0   selfheal 0.9   automate 0.8   tune 0.5   accept / review 0
+hours saved per month   = (technical + business per incident) × perMonth × factor
+USD saved per year      = 12 × perMonth × factor × (tech/inc × rate.technical + biz/inc × rate.business)
+
+Projected  = every toil candidate at its disposition factor            (what is on the table)
+Committed  = offenders in Ticketed, Fixed or Verified                    (what someone owns)
+Verified   = (baseline perMonth − post-fix perMonth) × hours/incident    (what the data proves)</code></pre>
+<p>The default disposition comes from the catalog entry, otherwise <em>automate</em> for toil candidates and <em>review</em> for the rest; the drawer, or a Claude verdict, changes it per offender.</p>
+
+<h2 id="ledger">5. The kill chain ledger</h2>
+<p><code>ledger/&lt;team&gt;/ledger.json</code> holds one entry per tracked pattern: state, history, disposition, Jira key, owner, the <strong>baseline</strong> captured when the pattern was first registered (per-month rate and hours per incident — kept even after the incidents disappear, which is the point), the <strong>latest</strong> observation, verification windows and the AI cost spent on it. Toil candidates register automatically as <em>Detected</em> on every analysis.</p>
+
+<div class="fig">
+<svg viewBox="0 0 960 250" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif" font-size="12">
+  <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--ink-2)"/></marker></defs>
+  <g font-weight="600" font-size="13">
+    <rect x="30" y="60" width="150" height="54" rx="6" fill="var(--tint-2)" stroke="var(--line-2)"/><text x="105" y="83" text-anchor="middle">Detected</text><text x="105" y="101" text-anchor="middle" font-weight="400" font-size="11" fill="var(--ink-2)">analysis (auto) or Track</text>
+    <rect x="240" y="60" width="150" height="54" rx="6" fill="var(--tint-3)" stroke="var(--line-2)"/><text x="315" y="83" text-anchor="middle">Ticketed</text><text x="315" y="101" text-anchor="middle" font-weight="400" font-size="11" fill="var(--ink-2)">you, with a Jira key</text>
+    <rect x="450" y="60" width="150" height="54" rx="6" fill="var(--plum)" stroke="var(--plum)"/><text x="525" y="83" text-anchor="middle" fill="#fff">Fixed</text><text x="525" y="101" text-anchor="middle" font-weight="400" font-size="11" fill="#fff">Jira Done (sync) or you</text>
+    <rect x="660" y="60" width="150" height="54" rx="6" fill="var(--lime)" stroke="var(--lime)"/><text x="735" y="83" text-anchor="middle" fill="var(--deep)">Verified</text><text x="735" y="101" text-anchor="middle" font-weight="400" font-size="11" fill="var(--deep)">schedule: 2 clean weeks</text>
+    <rect x="450" y="170" width="150" height="46" rx="6" fill="var(--deep)"/><text x="525" y="198" text-anchor="middle" fill="#fff">Regressed</text>
+    <rect x="240" y="170" width="150" height="46" rx="6" fill="#fff" stroke="var(--line-2)"/><text x="315" y="198" text-anchor="middle">Accepted</text>
+  </g>
+  <g stroke="var(--ink-2)" stroke-width="1.3" fill="none" marker-end="url(#ar2)">
+    <path d="M180 87 L240 87"/><path d="M390 87 L450 87"/><path d="M600 87 L660 87"/>
+    <path d="M735 114 L735 150 L600 193"/>
+    <path d="M450 193 L390 193"/>
+    <path d="M525 170 L525 150 L315 150 L315 114"/>
+    <path d="M105 114 L105 193 L240 193"/>
+  </g>
+  <g fill="var(--ink-2)" font-size="11">
+    <text x="612" y="150">incident after fix</text>
+    <text x="396" y="186">re-ticket or accept</text>
+    <text x="332" y="146">reopened (Jira) / back to Ticketed</text>
+    <text x="112" y="170">accept as is</text>
+    <text x="30" y="238">Every move is a history line (who, when, note) and, when Dynatrace is configured, a business event.</text>
+  </g>
+</svg>
+<div class="cap">Figure 2 — states and who moves them. Only Detected → Ticketed needs a human every time; the rest can come from Jira and the data.</div>
+</div>
+
+<h3>Verification logic (<code>advanceLedger</code>)</h3>
+<ul>
+  <li>For a <em>Fixed</em> pattern the fix time is the anchor. The window since then is cut into 7-day slices; after two full slices with zero matching incidents the pattern becomes <em>Verified</em> automatically.</li>
+  <li>For a <em>Verified</em> pattern any matching incident after the fix time flips it to <em>Regressed</em> with the count in the note.</li>
+  <li>The <em>post-fix rate</em> (incidents since the fix ÷ months since the fix) is stored on <code>latest.postFix</code> and is what verified savings are measured against — the 90-day window would otherwise dilute a fix made three weeks ago.</li>
+  <li>Both the UI (after every load) and <code>server/report.js</code> (on schedule) run this; the schedule is what makes it happen without anyone opening the tool.</li>
+</ul>
+
+<h2 id="claude">6. The Claude step</h2>
+<p>Claude Code is used for the one thing the deterministic engine cannot do well: decide what a pattern <em>means</em> and draft the fix. It is invoked per offender, on click, with a small packet, and the answer is a typed JSON verdict the UI can apply.</p>
+
+<div class="fig">
+<svg viewBox="0 0 960 230" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif" font-size="12">
+  <defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--ink-2)"/></marker></defs>
+  <g font-weight="600">
+    <rect x="20" y="30" width="150" height="46" rx="6" fill="var(--tint)" stroke="var(--line-2)"/><text x="95" y="58" text-anchor="middle">UI drawer</text>
+    <rect x="250" y="30" width="170" height="46" rx="6" fill="var(--tint)" stroke="var(--line-2)"/><text x="335" y="58" text-anchor="middle">server /api/analyze</text>
+    <rect x="500" y="30" width="170" height="46" rx="6" fill="var(--tint)" stroke="var(--line-2)"/><text x="585" y="58" text-anchor="middle">claude -p (stdin)</text>
+    <rect x="750" y="30" width="190" height="46" rx="6" fill="var(--lime-tint)" stroke="var(--line-2)"/><text x="845" y="58" text-anchor="middle">analysis-cache + ledger</text>
+  </g>
+  <g stroke="var(--ink-2)" stroke-width="1.3" fill="none" marker-end="url(#ar3)">
+    <path d="M170 45 L250 45"/><path d="M420 45 L500 45"/><path d="M670 45 L750 45"/>
+    <path d="M585 76 L585 120 L180 120 L180 76"/>
+    <path d="M845 76 L845 150 L100 150 L100 76"/>
+  </g>
+  <g fill="var(--ink-2)" font-size="11">
+    <text x="176" y="38">packet (JSON)</text><text x="426" y="38">budget? cache?</text><text x="676" y="38">stream-json</text>
+    <text x="300" y="112">NDJSON events relayed live: text, tool calls, cost</text>
+    <text x="300" y="142">final verdict + cost → ledger.ai, offender.ai.lastVerdict; cache file keyed by signature</text>
+    <text x="20" y="190">Packet ≈ 3–4 KB: offender stats, 12-week trend, 5 samples with close notes, team components/runbooks/Jira project, rules. No raw dump, no logs.</text>
+    <text x="20" y="210">Flags: --output-format stream-json --verbose --max-turns N --model M --allowedTools … [--json-schema]. Prompt goes through stdin, so no shell quoting on Windows.</text>
+  </g>
+</svg>
+<div class="cap">Figure 3 — the call path. The server spawns Claude Code with the repo as working directory, so the plugin's skill applies.</div>
+</div>
+
+<table>
+<tr><th>Control</th><th>Where</th><th>Effect</th></tr>
+<tr><td>Model, max turns, allowed tools</td><td><code>team.json → ai</code></td><td><code>sonnet</code> / 4 turns / <code>Read,Grep,Glob</code> by default; add Dynatrace MCP tools only if you want the evidence agent to use them</td></tr>
+<tr><td>Budget per run / per month</td><td><code>ai.budgetUsdPerRun</code>, <code>ai.budgetUsdPerMonth</code></td><td>runner refuses a run once the month is spent; per-run overspend is flagged on the result</td></tr>
+<tr><td>Cache</td><td><code>analysis-cache/&lt;team&gt;/&lt;signature&gt;.json</code></td><td>reused until the pattern grows more than 25%; <em>ignore cache</em> forces a fresh run</td></tr>
+<tr><td>Timeout</td><td><code>ai.timeoutSec</code></td><td>process tree killed (taskkill on Windows)</td></tr>
+<tr><td>Structured output</td><td><code>ai.jsonSchema</code></td><td><code>--json-schema</code> on non-Windows builds; the prompt also demands JSON, and <code>parseVerdict</code> strips fences</td></tr>
+<tr><td>Cost capture</td><td><code>total_cost_usd</code> from the result event</td><td>summed into <code>ledger.ai</code> (month + lifetime) and per offender → the AI-usage metric with no vendor API</td></tr>
+</table>
+<p>The verdict schema: <code>disposition</code> (eliminate | automate | selfheal | tune | accept), <code>confidence</code>, <code>root_cause</code>, <code>fix_type</code> (aap-job-template | code-change | config-change | alert-tuning | runbook | vendor | process | none), <code>fix_summary</code>, <code>hours_est</code> (fix effort), <code>jira_title</code>, <code>jira_description</code>, <code>evidence[]</code>, <code>risks[]</code>. <em>Use disposition</em> applies it; <em>Copy Jira text</em> gives you the ticket body with the volume numbers appended.</p>
+<p>Lite mode has the same loop by hand: <em>Copy packet</em> → run <code>/toil-analyzer:offender</code> in Claude Code (plugin in <code>plugins/toil-analyzer</code>) → <em>Paste verdict</em>.</p>
+
+<h2 id="schedule">7. Scheduled progress</h2>
+<p>Two scripts, deterministic, safe for a scheduler. GitLab CI runs them from <code>.gitlab-ci.yml</code> on a schedule; the same two lines work from Windows Task Scheduler or cron on the SRE box if runners cannot reach ServiceNow or Dynatrace.</p>
+<pre><code>node server/pull.js   --team example-team [--days 90]   # ServiceNow Table API → data/&lt;team&gt;-&lt;yyyymmdd&gt;.csv
+node server/report.js --team example-team --push        # analyze → Jira sync → advance ledger → summary → report → Dynatrace
+# --all runs every team; --file x.csv analyses a file instead of the latest pull; --no-jira skips the Jira step</code></pre>
+<ol>
+  <li><strong>pull.js</strong> builds <code>sysparm_query</code> from <code>team.json → servicenow</code>: <code>opened_at ≥ now − days ^ assignment_group.nameIN… ^ cmdb_ci.nameIN… ^ extraQuery</code>, fetches the listed fields as display values, pages by 1000 and writes the CSV the UI reads.</li>
+  <li><strong>report.js</strong> re-runs the engine on the newest file, auto-registers new toil candidates, asks Jira about every Ticketed/Fixed offender with a key (Done → Fixed; reopened → Ticketed), advances Fixed → Verified / Verified → Regressed, writes <code>ledger/&lt;team&gt;/summary.json</code> (what the executive rollup reads) and <code>reports/&lt;team&gt;/YYYY-Www.md</code>, then pushes metric lines and one business event per transition.</li>
+  <li>With <code>CI_PUSH_TOKEN</code> the job commits <code>ledger/</code> and <code>reports/</code> back to the default branch with <code>ci.skip</code>. The UI's <em>Sync repo</em> is stash-aware, so a laptop with uncommitted ledger moves still fast-forwards; a genuine conflict is reported and left for git.</li>
+</ol>
+
+<h2 id="dynatrace">8. Dynatrace</h2>
+<p>Configure <code>DT_URL</code> (SaaS <code>https://&lt;env&gt;.live.dynatrace.com</code> or ActiveGate <code>https://&lt;ag&gt;:9999/e/&lt;env&gt;</code>) and <code>DT_TOKEN</code> with scopes <code>metrics.ingest</code> and <code>bizevents.ingest</code>. Metrics go to <code>/api/v2/metrics/ingest</code> as line protocol; milestones to <code>/api/v2/bizevents/ingest</code> as JSON.</p>
+<table>
+<tr><th>Metric</th><th>Dimensions</th><th>Meaning</th></tr>
+<tr><td><code>toil.incidents</code>, <code>toil.candidates</code>, <code>toil.candidates.pct</code>, <code>toil.window.days</code></td><td>team, + <code>dynatrace.dimensions</code> (bu, env)</td><td>the analysed window; gauges, so re-pushing never double-counts</td></tr>
+<tr><td><code>toil.hours.technical</code>, <code>toil.hours.business</code>, <code>toil.usd.technical</code>, <code>toil.usd.business</code></td><td>team…</td><td>hours and cost in the window</td></tr>
+<tr><td><code>toil.hours.saved.projected</code>, <code>toil.hours.saved.verified</code>, <code>toil.usd.saved.*</code></td><td>team…</td><td>the savings ladder (committed and verified come from the ledger)</td></tr>
+<tr><td><code>toil.ai.cost_usd</code>, <code>toil.ai.runs</code></td><td>team…</td><td>AI usage this month, from Claude Code result events</td></tr>
+<tr><td><code>toil.ledger.offenders</code></td><td>team…, <code>state</code></td><td>kill-chain funnel</td></tr>
+<tr><td><code>toil.category.*</code>, <code>toil.component.*</code></td><td>team…, <code>category</code> / <code>component</code></td><td>incidents and hours by category and by the team's declared components — the common axis across teams</td></tr>
+<tr><td>bizevent <code>event.type = toil.milestone</code></td><td>team, signature, pattern, category, from_state, to_state, disposition, jira, baseline_per_month, hours_saved_per_month</td><td>one event per transition; DQL <code>fetch bizevents | filter event.type == "toil.milestone"</code></td></tr>
+</table>
+<p>One dashboard filtered by <code>team</code> is the multi-team view management asked for; no signature dimension is used on metrics to keep cardinality flat. Adjust metric key prefixes in <code>metricsLines</code> if your environment enforces a naming convention.</p>
+
+<h2 id="repo">9. Repository, metadata and merge flow</h2>
+<pre><code>ui/index.html            the app (engine, catalog and example team inlined) · ui/app.js UI source
+lib/core.js              engine · lib/servicenow.js · lib/dynatrace.js · lib/jira.js · lib/repo.js (git, MRs, Claude runner)
+server/index.js          local server · server/pull.js · server/report.js
+teams/&lt;id&gt;/team.json     team properties — validated by schema/team.schema.json
+signatures/*.json        shared catalog · signatures/proposed/  pending proposals (schema/signature.schema.json)
+ledger/&lt;id&gt;/             ledger.json + summary.json · reports/&lt;id&gt;/  weekly markdown
+plugins/toil-analyzer/   Claude Code plugin (skill, agents, /toil-analyzer:offender) · .claude-plugin/marketplace.json
+scripts/                 build.js · validate.js · test-signatures.js · smoke.js       .gitlab-ci.yml · CODEOWNERS
+data/, analysis-cache/   git-ignored: raw dumps and verdict cache stay on the machine</code></pre>
+
+<h3>team.json — what a team owns</h3>
+<table>
+<tr><th>Key</th><th>Purpose</th></tr>
+<tr><td><code>id</code>, <code>name</code>, <code>bu</code>, <code>apps</code></td><td>identity; <code>id</code> equals the folder name and the Dynatrace <code>team</code> dimension</td></tr>
+<tr><td><code>components[]</code> — <code>name</code>, <code>match</code>, <code>tags</code></td><td>roll-up axis: first component whose regex hits the pattern text/CIs wins, tags are substring fallbacks</td></tr>
+<tr><td><code>servicenow</code> — <code>assignmentGroups</code> / <code>assignmentGroupIds</code>, <code>ciFilter</code>, <code>days</code>, <code>fields</code>, <code>extraQuery</code></td><td>what the scheduled pull asks for</td></tr>
+<tr><td><code>jobPrefixes</code>, <code>maskPatterns[]</code></td><td>team-specific masking (job names, queues) so patterns collapse correctly</td></tr>
+<tr><td><code>hoursModel</code> — <code>technicalPerIncident</code>, <code>byCategory</code>, <code>elapsedCapHours</code>, <code>businessPerIncident</code>, <code>rates</code>, <code>currency</code></td><td>the hours and money model</td></tr>
+<tr><td><code>toil</code> — <code>threshold</code>, <code>repetitiveMin</code>, <code>keywords.automatable</code></td><td>what counts as toil</td></tr>
+<tr><td><code>ai</code> — <code>model</code>, <code>maxTurns</code>, <code>allowedTools</code>, <code>budgetUsdPerRun</code>, <code>budgetUsdPerMonth</code>, <code>timeoutSec</code>, <code>jsonSchema</code></td><td>the Claude leash</td></tr>
+<tr><td><code>dynatrace.dimensions</code>, <code>jira.projectKey</code>, <code>runbooks[]</code>, <code>contacts</code></td><td>extra dimensions, ticket defaults, context for the packet</td></tr>
+</table>
+
+<h3>Signature — what the catalog shares</h3>
+<p><code>id</code>, <code>name</code>, <code>category</code>, <code>priority</code>, <code>match.regex/flags/fields</code>, <code>disposition</code>, <code>hours.technical/business</code>, <code>automationHint</code>, <code>samples[]</code>, <code>owner</code>. Samples are not documentation: <code>scripts/test-signatures.js</code> fails CI if a sample is not matched by its own regex or if another signature (by priority) would claim it.</p>
+
+<div class="fig">
+<svg viewBox="0 0 960 150" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif" font-size="12">
+  <defs><marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--ink-2)"/></marker></defs>
+  <g font-weight="600" font-size="12.5">
+    <rect x="15" y="30" width="140" height="52" rx="6" fill="#fff" stroke="var(--line-2)" stroke-dasharray="4 3"/><text x="85" y="52" text-anchor="middle">Unknown offender</text><text x="85" y="70" text-anchor="middle" font-weight="400" font-size="11" fill="var(--ink-2)">auto-… id, masked key</text>
+    <rect x="200" y="30" width="150" height="52" rx="6" fill="var(--tint)" stroke="var(--line-2)"/><text x="275" y="52" text-anchor="middle">Propose signature</text><text x="275" y="70" text-anchor="middle" font-weight="400" font-size="11" fill="var(--ink-2)">regex pre-filled, live-tested</text>
+    <rect x="395" y="30" width="150" height="52" rx="6" fill="var(--tint)" stroke="var(--line-2)"/><text x="470" y="52" text-anchor="middle">Merge request</text><text x="470" y="70" text-anchor="middle" font-weight="400" font-size="11" fill="var(--ink-2)">branch propose/&lt;id&gt;</text>
+    <rect x="590" y="30" width="150" height="52" rx="6" fill="var(--tint)" stroke="var(--line-2)"/><text x="665" y="52" text-anchor="middle">CI gate</text><text x="665" y="70" text-anchor="middle" font-weight="400" font-size="11" fill="var(--ink-2)">schema + sample uniqueness</text>
+    <rect x="785" y="30" width="160" height="52" rx="6" fill="var(--lime-tint)" stroke="var(--line-2)"/><text x="865" y="52" text-anchor="middle">Catalog</text><text x="865" y="70" text-anchor="middle" font-weight="400" font-size="11" fill="var(--ink-2)">every team's next Sync</text>
+  </g>
+  <g stroke="var(--ink-2)" stroke-width="1.3" fill="none" marker-end="url(#ar4)"><path d="M155 56 L200 56"/><path d="M350 56 L395 56"/><path d="M545 56 L590 56"/><path d="M740 56 L785 56"/></g>
+  <text x="15" y="120" fill="var(--ink-2)" font-size="11.5">The file moves from signatures/proposed/ to signatures/ on approval. Team onboarding is the same shape: one MR adding teams/&lt;id&gt;/team.json, validated by CI, routed by CODEOWNERS.</text>
+</svg>
+<div class="cap">Figure 4 — the merge flow that closes gaps. Unknown patterns are the backlog of the catalog.</div>
+</div>
+
+<h2 id="server">10. Local server API</h2>
+<p><code>server/index.js</code> has no dependencies and only lends hands to the UI. All state-changing calls are refused when a foreign <code>Origin</code> header is present, so a web page cannot drive your clone through the browser.</p>
+<table>
+<tr><th>Route</th><th>Does</th></tr>
+<tr><td><code>GET /api/status</code></td><td>mode, repo/branch, Node, Claude binary, which integrations are configured, teams</td></tr>
+<tr><td><code>GET /api/teams</code> · <code>GET|PUT /api/team/:id</code></td><td>team properties</td></tr>
+<tr><td><code>GET /api/signatures</code> · <code>POST /api/signatures/propose</code></td><td>catalog + proposed; write proposal, branch, commit, push, open MR (<code>openMr: true</code>)</td></tr>
+<tr><td><code>GET /api/data[?team=]</code> · <code>GET /api/data/:file</code> · <code>POST /api/pull</code></td><td>list/open dumps in <code>data/</code>; pull from ServiceNow</td></tr>
+<tr><td><code>GET|PUT /api/ledger/:team</code> · <code>PUT /api/summary/:team</code> · <code>GET /api/exec</code></td><td>ledger, KPI snapshot, all-teams rollup</td></tr>
+<tr><td><code>POST /api/analyze</code></td><td>Claude run for one packet; streams NDJSON (<code>start</code>, <code>event</code>…, <code>result</code> | <code>error</code>)</td></tr>
+<tr><td><code>POST /api/metrics/push</code></td><td>Dynatrace metric lines + business events</td></tr>
+<tr><td><code>POST /api/jira/sync</code></td><td>Ticketed ⇄ Fixed from Jira status; returns the events and the updated ledger</td></tr>
+<tr><td><code>POST /api/report</code> · <code>POST /api/git/pull</code> · <code>POST /api/git/commit</code></td><td>save markdown; stash-aware pull; commit (and push) ledger/reports/teams</td></tr>
+</table>
+
+<h2 id="security">11. Security and data handling</h2>
+<ul>
+  <li><strong>Where data lives.</strong> Raw dumps: <code>data/</code>, git-ignored. Verdict cache: <code>analysis-cache/</code>, git-ignored. Ledger and summaries: committed, containing pattern names, counts, states, Jira keys and verdicts — not incident records. Unknown patterns are named by masked text, so mask anything sensitive with <code>maskPatterns</code> before it can appear there.</li>
+  <li><strong>What leaves the machine.</strong> To Claude Code: the packet (five raw sample short descriptions and close-note excerpts, counts, team context) through your enterprise Claude Code login — no API key is stored anywhere. To Dynatrace: numbers and dimension names. To Jira: issue keys. To GitLab: the proposal file.</li>
+  <li><strong>Server.</strong> Binds <code>127.0.0.1</code>, no listener on the network, cross-origin state changes refused, paths sanitised (<code>basename</code>, id regex).</li>
+  <li><strong>Secrets.</strong> <code>.env</code> is git-ignored; CI uses masked variables with the same names. Prefer an ActiveGate URL and a ServiceNow service account scoped to read incidents. Corporate CA via <code>NODE_EXTRA_CA_CERTS</code>.</li>
+  <li><strong>Regexes are code.</strong> A pathological signature regex runs against every incident in every team's browser; reviewers should reject nested quantifiers (<code>(a+)+</code>) and CI's sample test makes overlap visible.</li>
+</ul>
+
+<h2 id="ops">12. Running it: setup, rhythm, troubleshooting</h2>
+<h3>Setup once</h3>
+<ol>
+  <li>Push the repo to GitLab; replace the CODEOWNERS handles; paste real brand hex values at the top of <code>ui/index.html</code>.</li>
+  <li>Create <code>teams/&lt;id&gt;/team.json</code> from the example (Settings → <em>New team from this</em> does it in the UI) and open the MR.</li>
+  <li>On the SRE box: <code>git clone</code>, <code>.env</code> from <code>.env.example</code>, <code>npm start</code>. <code>npm test</code> confirms the engine, schemas and signatures.</li>
+  <li>Add a CI schedule (weekly is enough) with the masked variables; or a Task Scheduler job running the two scripts.</li>
+  <li>Dynatrace: one dashboard, tiles per metric above, filter by <code>team</code>. Business events view for milestones.</li>
+</ol>
+<h3>Weekly rhythm</h3>
+<ol>
+  <li>Schedule pulls and reports; the ledger moves Fixed → Verified on its own; Jira moves Ticketed → Fixed.</li>
+  <li>An SRE opens the tool, works the top offenders: analyze, set disposition, create the Jira from the copied text, mark Ticketed; propose signatures for the biggest unknowns.</li>
+  <li><em>Commit &amp; push ledger</em>. The executive view (or Present mode) reads straight from it; the report goes to Confluence if wanted.</li>
+</ol>
+<h3>Troubleshooting</h3>
+<table>
+<tr><th>Symptom</th><th>Cause and fix</th></tr>
+<tr><td>Rail shows <em>Lite</em> although the server is running</td><td>You opened the file, not <code>http://localhost:7077</code>. Or <code>PORT</code> was changed — check the console line printed at start.</td></tr>
+<tr><td><em>claude CLI not found</em></td><td>Set <code>CLAUDE_BIN</code> in <code>.env</code> to the full path (Windows: <code>claude.exe</code> or the npm <code>claude.cmd</code>).</td></tr>
+<tr><td>Claude answered but no verdict card</td><td>Older Claude Code without <code>--json-schema</code>: set <code>ai.jsonSchema: false</code>. The live pane shows the raw text; <em>Paste verdict</em> accepts it if it is JSON.</td></tr>
+<tr><td><em>Monthly AI budget reached</em></td><td>Raise <code>ai.budgetUsdPerMonth</code> or wait; cached verdicts still open.</td></tr>
+<tr><td>ServiceNow 401/403</td><td>Token or basic credentials, and the account needs read on <code>incident</code>. Assignment group names must match exactly; use <code>assignmentGroupIds</code> to be safe.</td></tr>
+<tr><td>Dynatrace 400 on metrics</td><td>A dimension value with unusual characters — they are sanitised, but check custom <code>dynatrace.dimensions</code>. 401: token scopes.</td></tr>
+<tr><td><em>Sync repo</em> reports a conflict</td><td>The schedule committed the same ledger file you edited. Resolve with git (the stash named <em>toil-analyzer sync</em> holds your version).</td></tr>
+<tr><td>Everything is Unknown</td><td>Wrong short-description column, or a very different phrasing than the catalog. Fix the mapping; propose signatures for the top clusters.</td></tr>
+<tr><td>Toil % looks too high</td><td>The threshold is per team (<code>toil.threshold</code>). Demo data is deliberately dense; real estates usually land at 30–60%.</td></tr>
+</table>
+
+<h2 id="limits">13. Known limits and next steps</h2>
+<ul>
+  <li>Business hours are elapsed time capped per incident, not calendar-aware working hours. A business-calendar option in <code>hoursModel</code> is the obvious refinement.</li>
+  <li>ServiceNow OAuth tokens are used as given; there is no refresh flow. Long-lived service-account basic auth or a token helper in CI covers the schedule.</li>
+  <li>The Jira sync moves states only; it does not create issues. <em>Copy Jira text</em> plus a Jira MCP in Claude Code is the interactive path; a create endpoint would be ~30 lines in <code>lib/jira.js</code>.</li>
+  <li>Claude Code's own OpenTelemetry export can add interactive-session usage to Dynatrace; the tool's <code>toil.ai.cost_usd</code> already covers every run it starts.</li>
+  <li>A ServiceNow MCP wrapper over <code>lib/servicenow.js</code> and a Confluence publish step for the weekly report are the two most requested add-ons; both are Node-only and contained.</li>
+</ul>
+</div>
+</body>
+</html>
